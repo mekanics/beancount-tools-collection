@@ -2,10 +2,25 @@
 This is a beancount importer for Interactive Brokers.
 Setup:
 1) have a running beancount system
-2) activate IB FLexQuery with the entries specified in []
-3) in the config.py file, specify a file location wiht your IBKR FlexQuery
-    Credentials
-4) run 'bean-extract config.py ibkr.yml -f mainLedgerFile.bean
+2) activate IB FlexQuery with the entries specified in the supported transaction types below
+3) create an ibkr.yaml file with your IBKR FlexQuery credentials (see Configuration File section)
+4) in the config.py file, specify the IBKRImporter with the ibkr.yaml file location
+5) run 'bean-extract config.py ibkr.yaml -f mainLedgerFile.bean'
+
+Configuration File (ibkr.yaml):
+The ibkr.yaml file must contain the following properties:
+
+token: 12345678912345678912345    # Your IB FlexQuery token (string of digits)
+queryId: 123456                  # Your FlexQuery ID number
+baseCcy: 'USD'                   # Base currency for your account
+
+To obtain these credentials:
+1. Log into your Interactive Brokers account
+2. Go to Reports > Flex Queries
+3. Create a new FlexQuery or use an existing one
+4. The FlexQuery must include: CashReport, Trades, CashTransactions, and CorporateActions
+5. Generate a token for the FlexQuery - this becomes your 'token' value
+6. Note the Query ID - this becomes your 'queryId' value
 """
 
 import pandas as pd
