@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beancount-tools-collection"
+version = "1.0.0"
+description = "A comprehensive collection of beancount tools: importers, price fetchers, plugins, and utilities"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Alexandre Joly", email = "alexandre.joly@mekanics.ch"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Accounting",
+]
+keywords = ["beancount", "accounting", "finance", "importers", "prices", "plugins", "tools", "banks", "trading", "investment"]
+requires-python = ">=3.8"
+dependencies = [
+    "beancount>=2.3.0",
+    "beangulp>=1.0.0",
+    "pandas>=1.3.0",
+    "python-dateutil>=2.8.0",
+    "loguru>=0.5.0",
+    "pyyaml>=5.4.0",
+    "ibflex>=0.14",  # for IBKR importer
+    "requests>=2.25.0",  # for price fetchers
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov>=2.12",
+    "black>=21.0",
+    "isort>=5.9",
+    "flake8>=3.9",
+    "mypy>=0.910",
+]
+test = [
+    "pytest>=6.0",
+    "pytest-cov>=2.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/mekanics/beancount-tools-collection"
+Repository = "https://github.com/mekanics/beancount-tools-collection"
+Documentation = "https://github.com/mekanics/beancount-tools-collection#readme"
+"Bug Tracker" = "https://github.com/mekanics/beancount-tools-collection/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+[tool.isort]
+profile = "black"
+line_length = 88 

@@ -1,0 +1,59 @@
+from .adapter import ImporterProtocolAdapter
+from beancount.core.number import D
+from beancount.core import account
+from beancount.core import amount
+from beancount.core import flags
+from beancount.core import data
+from beancount.core.position import Cost
+
+
+class TransactionInspector:
+    def __init__(self, transaction: data.Transaction):
+        self.transaction = transaction
+
+    def hasPayee(self, payee: str) -> bool:
+        return payee.lower() in self.transaction.payee.lower()
+
+    def isDebit(self) -> bool:
+        return self.transaction.postings[0].units.number < amount.Decimal("0")
+
+    def isCredit(self) -> bool:
+        return not self.isDebit()
+
+    def hasFirstPostingWithLessThan(self, x: amount.Decimal) -> bool:
+        return self.transaction.postings[0].units.number < x
+
+    def hasFirstPostingWith(self, x: amount.Decimal) -> bool:
+        return self.transaction.postings[0].units.number == x
+
+    def replacePayee(self, newPayee: str):
+        self.transaction = self.transaction._replace(
+            narration=self.transaction.payee,
+            payee=newPayee
+        )
+        return self
+
+    def narration(self, narration: str):
+        self.transaction = self.transaction._replace(
+            narration=narration
+        )
+        return self
+
+    def flagOkay(self):
+        self.transaction = self.transaction._replace(
+            flag=flags.FLAG_OKAY
+        )
+        return self
+
+    def flagWarning(self):
+        self.transaction = self.transaction._replace(
+            flag=flags.FLAG_WARNING
+        )
+        return self
+
+    def simplePosting(self, account):
+        self.transaction.postings.append(data.Posting(
+            account,
+            None, None, None, None, None
+        ))
+        return self
