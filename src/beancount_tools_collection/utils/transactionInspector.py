@@ -57,3 +57,23 @@ class TransactionInspector:
             None, None, None, None, None
         ))
         return self
+
+    def addTag(self, tag: str):
+        self.transaction = self.transaction._replace(
+            tags=self.transaction.tags.union([tag])
+        )
+        return self
+
+    def addTags(self, tags: list[str]):
+        self.transaction = self.transaction._replace(
+            tags=self.transaction.tags.union(tags))
+
+    def addLink(self, link: str):
+        self.transaction = self.transaction._replace(
+            links=self.transaction.links.union([link])
+        )
+        return self
+
+    def addLinks(self, links: list[str]):
+        self.transaction = self.transaction._replace(
+            links=self.transaction.links.union(links))
