@@ -137,7 +137,7 @@ class YuhImporter(Importer):
                     payee = payee.replace("Transfer from ", "").replace("Transfer to ", "").replace("Überweisung von ", "").replace("Überweisung an ", "")
                 
                 # Clean up Twint transactions and use title case
-                if row["ACTIVITY TYPE"] in ["CARD_TRANSACTION_IN", "CARD_TRANSACTION_OUT"]:
+                if row["ACTIVITY TYPE"] in ["CARD_TRANSACTION_IN", "CARD_TRANSACTION_OUT"] and "twint" in payee.lower():
                     payee = payee.replace("Twint from ", "").replace("Twint to ", "").replace("Twint von ", "").replace("Twint an ", "").title()
                     narration = "Twint"
 
