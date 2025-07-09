@@ -135,11 +135,10 @@ class YuhImporter(Importer):
                 # Clean up transfer payees
                 if row["ACTIVITY TYPE"] in ["PAYMENT_TRANSACTION_IN", "PAYMENT_TRANSACTION_OUT"]:
                     payee = payee.replace("Transfer from ", "").replace("Transfer to ", "").replace("Überweisung von ", "").replace("Überweisung an ", "")
-     
                 
-                # Clean up Twint transactions and use title case for narration
+                # Clean up Twint transactions and use title case
                 if row["ACTIVITY TYPE"] in ["CARD_TRANSACTION_IN", "CARD_TRANSACTION_OUT"]:
-                    payee = payee.replace("Twint an ", "").replace("Twint von ", "").title()
+                    payee = payee.replace("Twint from ", "").replace("Twint to ", "").replace("Twint von ", "").replace("Twint an ", "").title()
                     narration = "Twint"
 
                 logger.debug(f"Cleaned transfer payee: {payee}")
