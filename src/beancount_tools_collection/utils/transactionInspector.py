@@ -51,10 +51,11 @@ class TransactionInspector:
         )
         return self
 
-    def simplePosting(self, account, cost: Cost | CostSpec | None = None):
+    def simplePosting(self, account, units: amount.Amount | None = None):
         self.transaction.postings.append(data.Posting(
             account,
-            None, cost, None, None, None
+            units, 
+            None, None, None, None
         ))
         return self
 
