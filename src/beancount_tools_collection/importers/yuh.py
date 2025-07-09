@@ -126,15 +126,24 @@ class YuhImporter(Importer):
                     logger.error(f"Error processing amount in row {index + 1}: {e}")
                     continue
 
-                # Clean up description
-                description = row["ACTIVITY NAME"].strip('"')
-                logger.debug(f"Transaction description: {description}")
+                # Clean up payee
+                payee = row["ACTIVITY NAME"].strip('"')
+                logger.debug(f"Transaction payee: {payee}")
                 
-                # Clean up transfer descriptions
+                narration = ""
+                
+                # Clean up transfer payees
                 if row["ACTIVITY TYPE"] in ["PAYMENT_TRANSACTION_IN", "PAYMENT_TRANSACTION_OUT"]:
-                    description = description.replace("Transfer from ", "").replace("Transfer to ", "")
-                    logger.debug(f"Cleaned transfer description: {description}")
+                    payee = payee.replace("Transfer from ", "").replace("Transfer to ", "").replace("Überweisung von ", "").replace("Überweisung an ", "")
+     
                 
+                # Clean up Twint transactions and use title case for narration
+                if row["ACTIVITY TYPE"] in ["CARD_TRANSACTION_IN", "CARD_TRANSACTION_OUT"]:
+                    payee = payee.replace("Twint an ", "").replace("Twint von ", "").replace("Twint an ", "").title()
+                    narration = "Twint"
+
+                logger.debug(f"Cleaned transfer payee: {payee}")
+
                 # Create transaction
                 meta = data.new_metadata(filepath, index)
                 
@@ -142,8 +151,8 @@ class YuhImporter(Importer):
                     meta=meta,
                     date=date,
                     flag="*",
-                    payee=description,
-                    narration="",
+                    payee=payee,
+                    narration=narration,
                     tags=data.EMPTY_SET,
                     links=data.EMPTY_SET,
                     postings=[
