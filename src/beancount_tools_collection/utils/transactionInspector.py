@@ -4,7 +4,7 @@ from beancount.core import account
 from beancount.core import amount
 from beancount.core import flags
 from beancount.core import data
-from beancount.core.position import Cost
+from beancount.core.position import Cost, CostSpec
 
 
 class TransactionInspector:
@@ -51,10 +51,10 @@ class TransactionInspector:
         )
         return self
 
-    def simplePosting(self, account):
+    def simplePosting(self, account, cost: Cost | CostSpec | None = None):
         self.transaction.postings.append(data.Posting(
             account,
-            None, None, None, None, None
+            None, cost, None, None, None
         ))
         return self
 
