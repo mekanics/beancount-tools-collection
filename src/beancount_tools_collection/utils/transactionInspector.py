@@ -26,10 +26,10 @@ class TransactionInspector:
     def hasFirstPostingWith(self, x: amount.Decimal) -> bool:
         return self.transaction.postings[0].units.number == x
 
-    def replacePayee(self, newPayee: str):
+    def replacePayee(self, payee: str, keepAsNarration: bool = False):
         self.transaction = self.transaction._replace(
-            narration=self.transaction.payee,
-            payee=newPayee
+            payee=payee,
+            narration=self.transaction.payee if keepAsNarration else self.transaction.narration
         )
         return self
 
