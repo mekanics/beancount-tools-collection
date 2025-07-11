@@ -131,15 +131,21 @@ class YuhImporter(Importer):
                 logger.debug(f"Transaction payee: {payee}")
                 
                 narration = ""
+                tags = set()
                 
                 # Clean up transfer payees
                 if row["ACTIVITY TYPE"] in ["PAYMENT_TRANSACTION_IN", "PAYMENT_TRANSACTION_OUT"]:
                     payee = payee.replace("Transfer from ", "").replace("Transfer to ", "").replace("Überweisung von ", "").replace("Überweisung an ", "")
                 
                 # Clean up Twint transactions and use title case
-                if row["ACTIVITY TYPE"] in ["CARD_TRANSACTION_IN", "CARD_TRANSACTION_OUT"] and "twint" in payee.lower():
+                if "twint" in payee.lower():
                     payee = payee.replace("Twint from ", "").replace("Twint to ", "").replace("Twint von ", "").replace("Twint an ", "").title()
                     narration = "Twint"
+
+                # Clean up standing orders
+                if row["ACTIVITY TYPE"] in ["PAYMENT_TRANSACTION_IN", "PAYMENT_TRANSACTION_OUT"] and ("standing order" in payee.lower() or "dauerauftrag" in payee.lower()):
+                    payee = payee.replace("Dauerauftrag an  ", "")
+                    tags.add('recurring')
 
                 logger.debug(f"Cleaned transfer payee: {payee}")
 
@@ -152,7 +158,7 @@ class YuhImporter(Importer):
                     flag="*",
                     payee=payee,
                     narration=narration,
-                    tags=data.EMPTY_SET,
+                    tags=frozenset(tags),
                     links=data.EMPTY_SET,
                     postings=[
                         data.Posting(
