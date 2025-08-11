@@ -141,6 +141,11 @@ class YuhImporter(Importer):
                 if "twint" in payee.lower():
                     payee = payee.replace("Twint from ", "").replace("Twint to ", "").replace("Twint von ", "").replace("Twint an ", "").title()
                     narration = "Twint"
+                
+                # Clean up SumUp transactions 
+                if payee.lower().startswith("sumup"):
+                    payee = payee.replace("SumUp  *", "").replace("SumUp from ", "").replace("SumUp to ", "").replace("SumUp von ", "").replace("SumUp an ", "").title()
+                    narration = "SumUp"
 
                 # Clean up standing orders
                 if row["ACTIVITY TYPE"] in ["PAYMENT_TRANSACTION_IN", "PAYMENT_TRANSACTION_OUT"] and ("standing order" in payee.lower() or "dauerauftrag" in payee.lower()):
