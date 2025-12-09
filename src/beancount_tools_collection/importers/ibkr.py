@@ -64,7 +64,7 @@ class IBKRImporter(Importer):
     - Interest payments
     - Fees
     - Deposits/withdrawals
-    - Corporate actions (stock splits)
+    - Corporate actions (forward and reverse stock splits)
 
     Account Alias Handling:
     - The account alias is automatically extracted from each FlexStatement's AccountInformation
@@ -90,9 +90,10 @@ class IBKRImporter(Importer):
       - Mainaccount="Assets:Investment:IB" -> Cash account: "Assets:Current:IB"
 
     Corporate Actions:
-    - Stock splits are processed automatically from CorporateActions data
-    - Split shares are added with zero cost basis
-    - Split ratio is extracted from the action description
+    - Forward stock splits (FS): Additional shares are added with zero cost basis
+    - Reverse stock splits (RS): Old shares are removed and new consolidated shares added
+    - Split ratio is extracted from the action description (e.g., "SPLIT 4 FOR 1")
+    - Entries are grouped by actionID to match paired removal/addition entries
 
     Example account structures:
     Income:Stocks:Interactive-Brokers:Long-Term:VT:Div
@@ -884,7 +885,7 @@ class IBKRImporter(Importer):
 
                 cost = position.CostSpec(
                     number_per=(
-                        0
+                        Decimal(0)
                         if self.suppressClosedLotPrice
                         else round(clo["tradePrice"], 2)
                     ),
@@ -998,7 +999,7 @@ class IBKRImporter(Importer):
 
     def CorporateActions(self, ca):
         """
-        Process corporate actions from IBKR data, specifically stock splits.
+        Process corporate actions from IBKR data, including forward and reverse stock splits.
         
         Args:
             ca: pandas DataFrame with corporate actions data
@@ -1011,8 +1012,33 @@ class IBKRImporter(Importer):
 
         caTransactions = []
         
-        # Filter for stock splits only (type="FS" = Forward Split)
-        splits = ca[ca["type"].astype(str).str.contains("FS|FORWARDSPLIT", case=False, na=False)].copy()
+        # Filter for DETAIL level only (skip SUMMARY entries which are duplicates)
+        ca_detail = ca[ca["levelOfDetail"] == "DETAIL"] if "levelOfDetail" in ca.columns else ca
+        
+        # Process forward splits (FS)
+        forward_splits = ca_detail[ca_detail["type"].astype(str).str.contains("FS", case=False, na=False)].copy()
+        caTransactions.extend(self._process_forward_splits(forward_splits))
+        
+        # Process reverse splits (RS)
+        reverse_splits = ca_detail[ca_detail["type"].astype(str).str.contains("RS", case=False, na=False)].copy()
+        caTransactions.extend(self._process_reverse_splits(reverse_splits))
+        
+        return caTransactions
+
+    def _process_forward_splits(self, splits):
+        """
+        Process forward stock splits from IBKR data.
+        
+        Args:
+            splits: pandas DataFrame with forward split corporate actions
+            
+        Returns:
+            List of beancount transactions for forward splits
+        """
+        if len(splits) == 0:
+            return []
+
+        transactions = []
         
         for idx, row in splits.iterrows():
             symbol = row["symbol"]
@@ -1035,6 +1061,7 @@ class IBKRImporter(Importer):
                 "symbol": symbol,
                 "isin": row.get("isin", ""),
                 "split_ratio": split_ratio,
+                "split_type": "forward",
                 "split_description": description,
             })
             
@@ -1065,7 +1092,7 @@ class IBKRImporter(Importer):
             # Create transaction
             narration = f"Stock split {symbol} ({split_ratio})"
             
-            caTransactions.append(
+            transactions.append(
                 data.Transaction(
                     meta,
                     date,
@@ -1078,9 +1105,147 @@ class IBKRImporter(Importer):
                 )
             )
             
-            logger.info(f"Processed stock split: {date} {symbol} {split_ratio} (+{split_quantity})")
+            logger.info(f"Processed forward stock split: {date} {symbol} {split_ratio} (+{split_quantity})")
         
-        return caTransactions
+        return transactions
+
+    def _process_reverse_splits(self, splits):
+        """
+        Process reverse stock splits from IBKR data.
+        
+        Reverse splits have two paired entries with the same actionID:
+        - Removal entry: negative quantity (old shares removed)
+        - Addition entry: positive quantity (new consolidated shares added)
+        
+        Args:
+            splits: pandas DataFrame with reverse split corporate actions
+            
+        Returns:
+            List of beancount transactions for reverse splits
+        """
+        if len(splits) == 0:
+            return []
+
+        transactions = []
+        
+        # Group by actionID to match removal/addition pairs
+        for action_id, group in splits.groupby("actionID"):
+            # Identify removal (negative qty) and addition (positive qty) entries
+            removal = group[group["quantity"] < 0]
+            addition = group[group["quantity"] > 0]
+            
+            if removal.empty or addition.empty:
+                logger.warning(f"Incomplete reverse split pair for actionID {action_id}")
+                continue
+            
+            # Extract data from both entries
+            removal_row = removal.iloc[0]
+            addition_row = addition.iloc[0]
+            
+            old_symbol = removal_row["symbol"]
+            new_symbol = addition_row["symbol"]
+            old_qty = abs(removal_row["quantity"])
+            new_qty = addition_row["quantity"]
+            currency = addition_row["currency"]
+            
+            # Parse date - handle both dateTime formats
+            date_value = addition_row["dateTime"]
+            if hasattr(date_value, 'date'):
+                date = date_value.date()
+            elif isinstance(date_value, str) and ";" in date_value:
+                # Handle format like "20251205;202500"
+                date = datetime.strptime(date_value.split(";")[0], "%Y%m%d").date()
+            else:
+                date = addition_row["reportDate"]
+            
+            # Extract split ratio from description (e.g., "SPLIT 1 FOR 5")
+            description = addition_row["actionDescription"]
+            split_match = re.search(r'SPLIT (\d+) FOR (\d+)', description)
+            if split_match:
+                new_shares = split_match.group(1)
+                old_shares = split_match.group(2)
+                split_ratio = f"{new_shares}:{old_shares}"
+            else:
+                split_ratio = "unknown"
+            
+            # Create metadata
+            meta = data.new_metadata("reverse_split", 0, {
+                "symbol": new_symbol,
+                "old_symbol": old_symbol,
+                "isin": addition_row.get("isin", ""),
+                "split_ratio": split_ratio,
+                "split_type": "reverse",
+                "split_description": description,
+                "actionID": str(action_id),
+            })
+            
+            # Cost spec for removal - use None/empty to match any existing lot
+            cost_removal = position.CostSpec(
+                number_per=None,
+                number_total=None,
+                currency=None,
+                date=None,
+                label=None,
+                merge=False,
+            )
+            
+            # Cost spec for addition - zero cost (cost basis transfers implicitly)
+            cost_addition = position.CostSpec(
+                number_per=D('0'),
+                number_total=None,
+                currency=currency,
+                date=date,
+                label=None,
+                merge=False,
+            )
+            
+            # Create postings using the clean symbol for both sides
+            # This ensures the removal matches existing lots under the clean symbol (e.g., MSTY)
+            # rather than the timestamped symbol IBKR uses internally (e.g., 20251205172827MSTY)
+            # 1. Remove old shares (negative quantity) - uses clean symbol to match existing lots
+            # 2. Add new consolidated shares (positive quantity)
+            # Note: Cost basis is not automatically transferred - manual review may be needed
+            postings = [
+                data.Posting(
+                    self.getAssetAccount(new_symbol),
+                    amount.Amount(D(str(-old_qty)), new_symbol),
+                    cost_removal,
+                    None,
+                    None,
+                    None,
+                ),
+                data.Posting(
+                    self.getAssetAccount(new_symbol),
+                    amount.Amount(D(str(new_qty)), new_symbol),
+                    cost_addition,
+                    None,
+                    None,
+                    None,
+                ),
+            ]
+            
+            # Create transaction
+            narration = f"Reverse stock split {new_symbol} ({split_ratio}) - review cost basis"
+            
+            transactions.append(
+                data.Transaction(
+                    meta,
+                    date,
+                    self.flag,
+                    new_symbol,  # payee
+                    narration,
+                    data.EMPTY_SET,
+                    data.EMPTY_SET,
+                    postings,
+                )
+            )
+            
+            logger.info(
+                f"Processed reverse stock split: {date} {new_symbol} "
+                f"({split_ratio}): -{old_qty} -> +{new_qty}"
+            )
+        
+        return transactions
 
 
 def CollapseTradeSplits(tr):
