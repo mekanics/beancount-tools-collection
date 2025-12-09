@@ -32,8 +32,9 @@ dependencies = [
     "python-dateutil>=2.8.0",
     "loguru>=0.7.3",
     "pyyaml>=5.4.0",
-    "ibflex>=0.15",  # for IBKR importer
-    "requests>=2.32.4",  # for price fetchers
+    "ibflex>=0.15", # for IBKR importer
+    "requests>=2.32.4", # for price fetchers
+    "beanquery>=0.2.0",
 ]
 
 [project.optional-dependencies]

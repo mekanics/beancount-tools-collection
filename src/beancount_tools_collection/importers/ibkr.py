@@ -227,10 +227,74 @@ class IBKRImporter(Importer):
         formatted = alias.replace(" ", "-")
         return formatted[0].upper() + formatted[1:] if formatted else formatted
 
-
+    def _get_cost_basis_from_existing(self, account, symbol, as_of_date=None):
+        """
+        Query existing beancount entries to get the total cost basis for a symbol.
+        
+        Args:
+            account: The beancount account holding the position
+            symbol: The commodity/stock symbol
+            as_of_date: Optional date to query as of (defaults to all entries)
+            
+        Returns:
+            Tuple of (total_cost_basis, total_units, cost_currency) or (None, None, None) if not found
+        """
+        if not self._existing_entries:
+            logger.warning("No existing entries available for cost basis lookup")
+            return None, None, None
+        
+        try:
+            # Build query to get holdings with cost basis
+            query_str = f"""
+                SELECT sum(units(position)) as units, 
+                       sum(cost(position)) as cost_basis
+                FROM open_at(Filtered, date('{as_of_date}')) if '{as_of_date}' else open
+                WHERE account = '{account}'
+                AND currency(units(position)) = '{symbol}'
+            """
+            
+            # Simpler approach: iterate through entries to calculate cost basis
+            from beancount.core import inventory
+            from beancount.core import realization
+            
+            # Create a realization of the accounts
+            real_account = realization.realize(self._existing_entries)
+            
+            # Navigate to the specific account
+            account_parts = account.split(':')
+            current = real_account
+            for part in account_parts:
+                if part in current:
+                    current = current[part]
+                else:
+                    logger.info(f"Account {account} not found in existing entries")
+                    return None, None, None
+            
+            # Get the balance (inventory) for this account
+            balance = current.balance
+            
+            # Find the position for our symbol
+            for pos in balance:
+                if pos.units.currency == symbol:
+                    total_units = pos.units.number
+                    if pos.cost and pos.cost.number is not None:
+                        total_cost = pos.units.number * pos.cost.number
+                        cost_currency = pos.cost.currency
+                        logger.info(f"Found cost basis for {symbol}: {total_units} units, {total_cost} {cost_currency}")
+                        return total_cost, total_units, cost_currency
+            
+            logger.info(f"No position found for {symbol} in {account}")
+            return None, None, None
+            
+        except Exception as e:
+            logger.warning(f"Error querying cost basis: {e}")
+            return None, None, None
 
     def extract(self, filepath, existing=None):
         # the actual processing of the flex query
+        
+        # Store existing entries for cost basis lookup in corporate actions
+        self._existing_entries = existing
 
         # get the IBKR creentials ready
         try:
@@ -1168,8 +1232,35 @@ class IBKRImporter(Importer):
             else:
                 split_ratio = "unknown"
             
+            # Try to get cost basis from existing entries
+            asset_account = self.getAssetAccount(new_symbol)
+            total_cost, total_units, cost_currency = self._get_cost_basis_from_existing(
+                asset_account, new_symbol
+            )
+            
+            # Calculate new per-share cost if we found the original cost basis
+            cost_basis_found = total_cost is not None and total_units is not None
+            if cost_basis_found and total_cost is not None:
+                # Transfer the total cost basis to the new shares
+                new_cost_per_share = D(str(round(total_cost / D(str(new_qty)), 6)))
+                cost_currency = cost_currency or currency
+                narration_suffix = ""
+                logger.info(
+                    f"Cost basis lookup successful: {total_cost} {cost_currency} / {new_qty} = "
+                    f"{new_cost_per_share} {cost_currency} per share"
+                )
+            else:
+                # Fallback to zero cost with warning
+                new_cost_per_share = D('0')
+                cost_currency = currency
+                narration_suffix = " - REVIEW COST BASIS"
+                logger.warning(
+                    f"Could not determine cost basis for {new_symbol} in {asset_account}. "
+                    f"Using zero cost - manual adjustment required."
+                )
+            
             # Create metadata
-            meta = data.new_metadata("reverse_split", 0, {
+            meta_dict = {
                 "symbol": new_symbol,
                 "old_symbol": old_symbol,
                 "isin": addition_row.get("isin", ""),
@@ -1177,7 +1268,12 @@ class IBKRImporter(Importer):
                 "split_type": "reverse",
                 "split_description": description,
                 "actionID": str(action_id),
-            })
+            }
+            if cost_basis_found:
+                meta_dict["original_total_cost"] = str(total_cost)
+                meta_dict["original_units"] = str(total_units)
+            
+            meta = data.new_metadata("reverse_split", 0, meta_dict)
             
             # Cost spec for removal - use None/empty to match any existing lot
             cost_removal = position.CostSpec(
@@ -1189,11 +1285,11 @@ class IBKRImporter(Importer):
                 merge=False,
             )
             
-            # Cost spec for addition - zero cost (cost basis transfers implicitly)
+            # Cost spec for addition - use calculated cost basis or zero if not found
             cost_addition = position.CostSpec(
-                number_per=D('0'),
+                number_per=new_cost_per_share,
                 number_total=None,
-                currency=currency,
+                currency=cost_currency,
                 date=date,
                 label=None,
                 merge=False,
@@ -1202,12 +1298,9 @@ class IBKRImporter(Importer):
             # Create postings using the clean symbol for both sides
             # This ensures the removal matches existing lots under the clean symbol (e.g., MSTY)
             # rather than the timestamped symbol IBKR uses internally (e.g., 20251205172827MSTY)
-            # 1. Remove old shares (negative quantity) - uses clean symbol to match existing lots
-            # 2. Add new consolidated shares (positive quantity)
-            # Note: Cost basis is not automatically transferred - manual review may be needed
             postings = [
                 data.Posting(
-                    self.getAssetAccount(new_symbol),
+                    asset_account,
                     amount.Amount(D(str(-old_qty)), new_symbol),
                     cost_removal,
                     None,
@@ -1215,7 +1308,7 @@ class IBKRImporter(Importer):
                     None,
                 ),
                 data.Posting(
-                    self.getAssetAccount(new_symbol),
+                    asset_account,
                     amount.Amount(D(str(new_qty)), new_symbol),
                     cost_addition,
                     None,
@@ -1225,7 +1318,7 @@ class IBKRImporter(Importer):
             ]
             
             # Create transaction
-            narration = f"Reverse stock split {new_symbol} ({split_ratio}) - review cost basis"
+            narration = f"Reverse stock split {new_symbol} ({split_ratio}){narration_suffix}"
             
             transactions.append(
                 data.Transaction(
@@ -1242,7 +1335,7 @@ class IBKRImporter(Importer):
             
             logger.info(
                 f"Processed reverse stock split: {date} {new_symbol} "
-                f"({split_ratio}): -{old_qty} -> +{new_qty}"
+                f"({split_ratio}): -{old_qty} -> +{new_qty} @ {new_cost_per_share} {cost_currency}"
             )
         
         return transactions
