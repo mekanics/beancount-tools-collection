@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: Office/Business :: Financial :: Accounting",
 ]
 keywords = ["beancount", "accounting", "finance", "importers", "prices", "plugins", "tools", "banks", "trading", "investment"]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
     "beancount>=3.1.0",
     "beangulp>=0.2.0",
