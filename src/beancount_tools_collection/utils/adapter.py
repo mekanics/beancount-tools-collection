@@ -2,7 +2,7 @@ from beangulp.importer import Importer
 
 
 class ImporterProtocolAdapter(Importer):
-    def __init__(self, adaptee):
+    def __init__(self, adaptee: Importer):
         self.adaptee = adaptee
 
     def identify(self, f):
