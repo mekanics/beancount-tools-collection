@@ -318,15 +318,14 @@ class IBKRImporter(Importer):
                 response = client.download(token, queryId)
                 statement = parser.parse(response)
             except ResponseCodeError as E:
-                print(E)
-                print("aborting.")
+                logger.error(f"IBKR API responded with error code: {E}")
+                warnings.warn(f"IBKR API error: {E}. Aborting.")
                 return []
             except Exception as e:
-                if hasattr(e, "message"):
-                    warnings.warn(str(e.message))
-                else:
-                    warnings.warn(str(e))
-                warnings.warn("could not fetch IBKR Statement. exiting.")
+                import traceback
+                logger.error(f"Failed to fetch/parse IBKR statement: {type(e).__name__}: {e}")
+                logger.error(f"Full traceback:\n{traceback.format_exc()}")
+                warnings.warn(f"could not fetch IBKR Statement: {type(e).__name__}: {e}")
                 # another option would be to try again
                 return []
             assert isinstance(statement, Types.FlexQueryResponse)
