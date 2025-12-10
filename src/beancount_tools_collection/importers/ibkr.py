@@ -93,7 +93,7 @@ class IBKRImporter(Importer):
     - Forward stock splits (FS): Additional shares are added with zero cost basis
     - Reverse stock splits (RS): Old shares are removed and new consolidated shares added
     - Split ratio is extracted from the action description (e.g., "SPLIT 4 FOR 1")
-    - Entries are grouped by actionID to match paired removal/addition entries
+    - Entries are grouped by actionID (if available) or dateTime+symbol+description to match paired removal/addition entries
 
     Example account structures:
     Income:Stocks:Interactive-Brokers:Long-Term:VT:Div
@@ -1176,9 +1176,13 @@ class IBKRImporter(Importer):
         """
         Process reverse stock splits from IBKR data.
         
-        Reverse splits have two paired entries with the same actionID:
+        Reverse splits have two paired entries that need to be matched:
         - Removal entry: negative quantity (old shares removed)
         - Addition entry: positive quantity (new consolidated shares added)
+        
+        Pairing strategy:
+        1. If actionID is available, group by actionID (preferred)
+        2. If actionID is not available (e.g., in ibflex), group by dateTime + symbol + actionDescription
         
         Args:
             splits: pandas DataFrame with reverse split corporate actions
@@ -1191,14 +1195,25 @@ class IBKRImporter(Importer):
 
         transactions = []
         
-        # Group by actionID to match removal/addition pairs
-        for action_id, group in splits.groupby("actionID"):
+        # Group by dateTime, symbol, and actionDescription to match removal/addition pairs
+        # This is an alternative to actionID which may not be available in ibflex
+        grouping_columns = []
+        if "actionID" in splits.columns:
+            grouping_columns = ["actionID"]
+            logger.debug("Using actionID for reverse split grouping")
+        else:
+            # Fallback grouping when actionID is not available
+            grouping_columns = ["dateTime", "symbol", "actionDescription"]
+            logger.debug("actionID not available, using dateTime+symbol+actionDescription for reverse split grouping")
+        
+        for group_key, group in splits.groupby(grouping_columns):
             # Identify removal (negative qty) and addition (positive qty) entries
             removal = group[group["quantity"] < 0]
             addition = group[group["quantity"] > 0]
             
             if removal.empty or addition.empty:
-                logger.warning(f"Incomplete reverse split pair for actionID {action_id}")
+                group_desc = group_key if isinstance(group_key, (str, int)) else str(group_key)
+                logger.warning(f"Incomplete reverse split pair for group {group_desc}")
                 continue
             
             # Extract data from both entries
@@ -1266,8 +1281,13 @@ class IBKRImporter(Importer):
                 "split_ratio": split_ratio,
                 "split_type": "reverse",
                 "split_description": description,
-                "actionID": str(action_id),
             }
+            
+            # Add actionID to metadata if available, otherwise use group key info
+            if "actionID" in splits.columns:
+                meta_dict["actionID"] = str(group_key)
+            else:
+                meta_dict["group_key"] = str(group_key)
             if cost_basis_found:
                 meta_dict["original_total_cost"] = str(total_cost)
                 meta_dict["original_units"] = str(total_units)
