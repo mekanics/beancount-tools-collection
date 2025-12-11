@@ -93,7 +93,7 @@ class IBKRImporter(Importer):
     - Forward stock splits (FS): Additional shares are added with zero cost basis
     - Reverse stock splits (RS): Old shares are removed and new consolidated shares added
     - Split ratio is extracted from the action description (e.g., "SPLIT 4 FOR 1")
-    - Entries are grouped by actionID (if available) or dateTime+symbol+description to match paired removal/addition entries
+    - Entries are grouped by actionID (if available) or dateTime+underlyingSymbol+type to match paired removal/addition entries
 
     Example account structures:
     Income:Stocks:Interactive-Brokers:Long-Term:VT:Div
@@ -1182,7 +1182,7 @@ class IBKRImporter(Importer):
         
         Pairing strategy:
         1. If actionID is available, group by actionID (preferred)
-        2. If actionID is not available (e.g., in ibflex), group by dateTime + symbol + actionDescription
+        2. If actionID is not available (e.g., in ibflex), group by dateTime + underlyingSymbol + type
         
         Args:
             splits: pandas DataFrame with reverse split corporate actions
@@ -1195,7 +1195,7 @@ class IBKRImporter(Importer):
 
         transactions = []
         
-        # Group by dateTime, symbol, and actionDescription to match removal/addition pairs
+        # Group by actionID or fallback to dateTime + underlyingSymbol + type
         # This is an alternative to actionID which may not be available in ibflex
         grouping_columns = []
         if "actionID" in splits.columns:
@@ -1203,8 +1203,10 @@ class IBKRImporter(Importer):
             logger.debug("Using actionID for reverse split grouping")
         else:
             # Fallback grouping when actionID is not available
-            grouping_columns = ["dateTime", "symbol", "actionDescription"]
-            logger.debug("actionID not available, using dateTime+symbol+actionDescription for reverse split grouping")
+            # Use underlyingSymbol instead of symbol because the symbol changes in splits
+            # but underlyingSymbol stays the same for paired entries
+            grouping_columns = ["dateTime", "underlyingSymbol", "type"]
+            logger.debug("actionID not available, using dateTime+underlyingSymbol+type for reverse split grouping")
         
         for group_key, group in splits.groupby(grouping_columns):
             # Identify removal (negative qty) and addition (positive qty) entries
