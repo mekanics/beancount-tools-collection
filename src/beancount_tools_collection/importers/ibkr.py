@@ -1075,15 +1075,12 @@ class IBKRImporter(Importer):
 
         caTransactions = []
         
-        # Filter for DETAIL level only (skip SUMMARY entries which are duplicates)
-        ca_detail = ca[ca["levelOfDetail"] == "DETAIL"] if "levelOfDetail" in ca.columns else ca
-        
         # Process forward splits (FS)
-        forward_splits = ca_detail[ca_detail["type"].astype(str).str.contains("FS", case=False, na=False)].copy()
+        forward_splits = ca[ca["type"].astype(str).str.contains("FS", case=False, na=False)].copy()
         caTransactions.extend(self._process_forward_splits(forward_splits))
         
         # Process reverse splits (RS)
-        reverse_splits = ca_detail[ca_detail["type"].astype(str).str.contains("RS", case=False, na=False)].copy()
+        reverse_splits = ca[ca["type"].astype(str).str.contains("RS", case=False, na=False)].copy()
         caTransactions.extend(self._process_reverse_splits(reverse_splits))
         
         return caTransactions
