@@ -4,7 +4,7 @@ Open https://app.viac.ch/, choose a portfolio and look for a 'transactions' requ
 Download the request and pass the resulting file to this importer.
 """
 
-### https://app.viac.ch/files/document/21V-KOM-JHE/content/21V-KOM-JHE.pdf
+### https://app.viac.ch/files/document/21V-KOM-JHE
 
 
 import json
@@ -168,7 +168,7 @@ class ViacImporter(Importer):
         return self.main_account or self.root_account
 
     def getDocumentUrl(self, document):
-        return f"https://app.viac.ch/files/document/{document}/content/{document}.pdf"
+        return f"https://app.viac.ch/files/document/{document}"
 
     def _get_mapped_account(self, pillar, account_type, portfolio_num=None):
         """Get the mapped account based on pillar and type"""
