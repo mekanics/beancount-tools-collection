@@ -48,6 +48,13 @@ from beancount.core.number import MISSING
 
 from loguru import logger
 
+# Maps undocumented IBKR compound note codes to their constituent ibflex Code values.
+# IBKR occasionally concatenates codes without a separator (e.g. "RI" instead of "R;I"),
+# which ibflex cannot parse. Entries here are expanded before unknown codes are dropped.
+_IBKR_CODE_ALIASES: dict[str, list[str]] = {
+    "RI": ["R", "I"],  # Reinvestment (DRIP) + Internal transfer
+}
+
 
 class IBKRImporter(Importer):
     """
@@ -290,6 +297,32 @@ class IBKRImporter(Importer):
             logger.warning(f"Error querying cost basis: {e}")
             return None, None, None
 
+    def _sanitize_ibkr_xml(self, response):
+        """Strip note codes unknown to ibflex from raw IBKR XML bytes.
+
+        IBKR occasionally introduces new Trade.notes codes (e.g. 'RI') that
+        are not yet in ibflex's Code enum, causing a FlexParserError before
+        any of our processing runs. This filters the notes attributes in-place
+        to only keep values ibflex can parse, so unknown codes are silently
+        dropped rather than crashing the entire import.
+        """
+        known_codes = {c.value for c in Code}
+
+        def _filter(match):
+            raw = match.group(1).decode()
+            expanded = []
+            for c in raw.split(";"):
+                if c in known_codes:
+                    expanded.append(c)
+                elif c in _IBKR_CODE_ALIASES:
+                    expanded.extend(_IBKR_CODE_ALIASES[c])
+                    logger.debug(f"Mapped unknown IBKR note code '{c}' -> {_IBKR_CODE_ALIASES[c]}")
+                elif c:
+                    logger.warning(f"Dropped unrecognised IBKR note code: '{c}'")
+            return b'notes="' + ";".join(expanded).encode() + b'"'
+
+        return re.sub(rb'notes="([^"]*)"', _filter, response)
+
     def extract(self, filepath, existing=None):
         # the actual processing of the flex query
         
@@ -316,6 +349,7 @@ class IBKRImporter(Importer):
                 # Warning: queries sometimes take a few minutes until IB provides
                 # the data due to busy servers
                 response = client.download(token, queryId)
+                response = self._sanitize_ibkr_xml(response)
                 statement = parser.parse(response)
             except ResponseCodeError as E:
                 logger.error(f"IBKR API responded with error code: {E}")
