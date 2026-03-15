@@ -48,13 +48,18 @@ from beancount.core.number import MISSING
 
 from loguru import logger
 
-# Maps undocumented IBKR compound note codes to their constituent ibflex Code values.
-# IBKR occasionally concatenates codes without a separator (e.g. "RI" instead of "R;I"),
-# which ibflex cannot parse. Entries here are expanded before unknown codes are dropped.
+# Maps IBKR note codes that are unknown to ibflex to their closest known equivalents.
+# ibflex's Code enum (v0.15) is incomplete; IBKR adds codes without notice. Entries here
+# are expanded before unknown codes are dropped so the import does not crash.
+# To add a new mapping: run with DEBUG logging, look for "Dropped unrecognised" warnings,
+# identify the code's meaning from IBKR docs, and add it below.
+#
+# Known gaps vs ibflex v0.15:
+#   RI  - Recurring Investment (IBKR auto-invest / DCA plan). Distinct from "R"
+#         (Dividend Reinvestment / DRIP). Mapped to ["I"] (Internal) as the closest
+#         available equivalent; must NOT map to "R" or it will be mis-tagged as #drip.
+#         Tracked upstream: https://github.com/csingley/ibflex (no PR yet).
 _IBKR_CODE_ALIASES: dict[str, list[str]] = {
-    # "RI" is an IBKR-specific code distinct from "R" (Reinvestment) and "I" (Internal).
-    # Genuine DRIP buys carry notes="R" only. "RI" appears on internal account transfers
-    # and must NOT be treated as a reinvestment signal.
     "RI": ["I"],
 }
 
