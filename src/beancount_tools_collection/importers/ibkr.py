@@ -34,7 +34,7 @@ import numpy as np
 import yaml
 from os import path
 from ibflex import client, parser, Types
-from ibflex.enums import CashAction, BuySell
+from ibflex.enums import CashAction, BuySell, Code
 from ibflex.client import ResponseCodeError
 from beangulp.importer import Importer
 
@@ -899,6 +899,8 @@ class IBKRImporter(Importer):
                 ),
             ]
 
+            tags = frozenset({"drip"}) if Code.REINVESTMENT in row.get("notes", ()) else data.EMPTY_SET
+
             Shoppingbag.append(
                 data.Transaction(
                     data.new_metadata("Buy", 0),
@@ -906,7 +908,7 @@ class IBKRImporter(Importer):
                     self.flag,
                     symbol,  # payee
                     " ".join(["BUY", quantity.to_string(), "@", price.to_string()]),
-                    data.EMPTY_SET,
+                    tags,
                     data.EMPTY_SET,
                     postings,
                 )
