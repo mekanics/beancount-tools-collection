@@ -52,7 +52,10 @@ from loguru import logger
 # IBKR occasionally concatenates codes without a separator (e.g. "RI" instead of "R;I"),
 # which ibflex cannot parse. Entries here are expanded before unknown codes are dropped.
 _IBKR_CODE_ALIASES: dict[str, list[str]] = {
-    "RI": ["R", "I"],  # Reinvestment (DRIP) + Internal transfer
+    # "RI" is an IBKR-specific code distinct from "R" (Reinvestment) and "I" (Internal).
+    # Genuine DRIP buys carry notes="R" only. "RI" appears on internal account transfers
+    # and must NOT be treated as a reinvestment signal.
+    "RI": ["I"],
 }
 
 
