@@ -174,7 +174,7 @@ class YuhImporter(Importer):
             fee = row["FEES/COMMISSION"]
             exchange_rate = row.get("PRICE PER UNIT", "")
             
-            total_chf = chf_debit + fee
+            total_chf = chf_debit
             orig_idx = int(row["_orig_idx_orig"])
             orig_date = row["DATE_orig"].date() if pd.notna(row["DATE_orig"]) else row["DATE"].date()
             
@@ -202,7 +202,7 @@ class YuhImporter(Importer):
             
             postings.append(data.Posting(
                 "Expenses:Unknown",
-                amount.Amount(chf_debit, "CHF"),
+                amount.Amount(chf_debit - fee, "CHF"),
                 None, None, None, None
             ))
             
