@@ -2,7 +2,7 @@
 
 🧮 My personal collection of beancount tools including importers, price fetchers, plugins, and utilities for various financial institutions.
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub issues](https://img.shields.io/github/issues/mekanics/beancount-tools-collection)](https://github.com/mekanics/beancount-tools-collection/issues)
 
@@ -40,7 +40,7 @@
 
 ## Installation
 
-### From PyPI (when published)
+### From PyPI
 
 ```bash
 pip install beancount-tools-collection
