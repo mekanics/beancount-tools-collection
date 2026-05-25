@@ -49,19 +49,39 @@ class VisecaImporter(Importer):
         txs = data_json["list"]
         df = pd.json_normalize(txs)
 
+        # pandas.json_normalize fills missing keys with NaN. NaN is a float
+        # that is *truthy* in Python and survives chained `or` expressions,
+        # which would otherwise leak into Transaction fields (payee, meta, ...)
+        # and break Fava's JSON serialization.
+        def safe_value(v):
+            if v is None:
+                return None
+            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                return None
+            try:
+                if pd.isna(v):
+                    return None
+            except (TypeError, ValueError):
+                pass
+            return v
+
         for idx, row in df.iterrows():
             logger.debug(f"Processing transaction {idx}: {row.get('transactionId')}")
             try:
                 # Category mapping
-                pfm_cat = row.get("pfmCategory.id", "other")
+                pfm_cat = safe_value(row.get("pfmCategory.id")) or "other"
                 if pfm_cat == "deposits":
                     continue  # Ignore payment transactions
 
                 # Parse date
                 date = pd.to_datetime(row["date"]).date()
-                payee = row.get("prettyName") or row.get("merchantName") or "Unknown"
-                details = row.get("details", "")
-                currency = row.get("currency", "CHF")
+                payee = (
+                    safe_value(row.get("prettyName"))
+                    or safe_value(row.get("merchantName"))
+                    or "Unknown"
+                )
+                details = safe_value(row.get("details")) or ""
+                currency = safe_value(row.get("currency")) or "CHF"
                 amt = Decimal(str(row["amount"]))
                 # Viseca: negative = refund, positive = expense
                 amt = -amt if amt < 0 else amt
@@ -69,8 +89,8 @@ class VisecaImporter(Importer):
                 expense_account = self.category_map.get(pfm_cat, "Expenses:Unknown")
                 
                 # Foreign currency handling
-                orig_amt = row.get("originalAmount")
-                orig_cur = row.get("originalCurrency")
+                orig_amt = safe_value(row.get("originalAmount"))
+                orig_cur = safe_value(row.get("originalCurrency"))
                 postings = []
                 
                 # Main posting: always the credit card liability
@@ -124,33 +144,25 @@ class VisecaImporter(Importer):
                 #         )
                 #     )
     
-                # Build metadata dict and convert floats to strings
-                def safe_meta_value(v):
-                    if v is None:
-                        return None
-                    if isinstance(v, float):
-                        if math.isnan(v) or math.isinf(v):
-                            return None
-                    if pd.isna(v):
-                        return None
-                    return v
-
                 meta_dict = {
-                    "transactionId": safe_meta_value(row.get("transactionId")),
-                    "category": safe_meta_value(pfm_cat),
-                    "merchant": safe_meta_value(payee),
-                    "details": safe_meta_value(details),
-                    "originalAmount": str(safe_meta_value(orig_amt)) if orig_amt is not None else None,
-                    "originalCurrency": safe_meta_value(orig_cur),
+                    "transactionId": safe_value(row.get("transactionId")),
+                    "category": safe_value(pfm_cat),
+                    "merchant": safe_value(payee),
+                    "details": safe_value(details),
+                    "originalAmount": str(orig_amt) if orig_amt is not None else None,
+                    "originalCurrency": orig_cur,
                 }
-                if orig_cur != "CHF":
-                    meta_dict["conversionRate"] = safe_meta_value(row.get("conversionRate"))
-                    meta_dict["conversionRateDate"] = safe_meta_value(row.get("conversionRateDate"))
-                
-                # Convert any float values to strings (for safety)
-                for k, v in meta_dict.items():
-                    if isinstance(v, float):
-                        meta_dict[k] = str(v)
+                if orig_cur is not None and orig_cur != "CHF":
+                    meta_dict["conversionRate"] = safe_value(row.get("conversionRate"))
+                    meta_dict["conversionRateDate"] = safe_value(row.get("conversionRateDate"))
+
+                # Drop None entries and stringify any residual floats so nothing
+                # NaN-shaped slips into Fava's JSON encoder.
+                meta_dict = {
+                    k: (str(v) if isinstance(v, float) else v)
+                    for k, v in meta_dict.items()
+                    if v is not None
+                }
 
                 meta = data.new_metadata(filepath, idx, meta_dict)
                 txn = data.Transaction(
