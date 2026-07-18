@@ -68,6 +68,15 @@ class VisecaImporter(Importer):
         for idx, row in df.iterrows():
             logger.debug(f"Processing transaction {idx}: {row.get('transactionId')}")
             try:
+                # Skip non-booked transactions
+                state_type = safe_value(row.get("stateType"))
+                if state_type != "booked":
+                    logger.debug(
+                        f"Skipping non-booked transaction {row.get('transactionId')} "
+                        f"(stateType={state_type})"
+                    )
+                    continue
+
                 # Category mapping
                 pfm_cat = safe_value(row.get("pfmCategory.id")) or "other"
                 if pfm_cat == "deposits":
