@@ -14,7 +14,11 @@ import yaml
 from pathlib import Path
 from beancount.core import data as bdata
 
-from beancount_tools_collection.importers.ibkr import IBKRImporter
+from beancount_tools_collection.importers.ibkr import (
+    IBKRConfigError,
+    IBKRImportError,
+    IBKRImporter,
+)
 
 # ---------------------------------------------------------------------------
 # Credentials
@@ -74,7 +78,16 @@ def importer():
 @pytest.fixture(scope="session")
 def live_entries(importer, ibkr_yaml):
     """Single API call shared across all tests in the session."""
-    entries = importer.extract(ibkr_yaml)
+    try:
+        entries = importer.extract(ibkr_yaml)
+    except IBKRConfigError as e:
+        # .env present but IBKR rejected the token/query — cannot run happy-path live tests.
+        pytest.skip(f"IBKR credentials rejected by API: {e}")
+    except IBKRImportError as e:
+        # Credentials present but IBKR unreachable (sandbox/CI proxy, DNS, etc.).
+        if "network error" in str(e).lower() or "Max retries" in str(e):
+            pytest.skip(f"IBKR API unreachable from this environment: {e}")
+        raise
     assert isinstance(entries, list), "extract() must return a list"
     return entries
 
@@ -86,6 +99,41 @@ def live_entries(importer, ibkr_yaml):
 @requires_credentials
 def test_identify(importer, ibkr_yaml):
     assert importer.identify(ibkr_yaml)
+
+
+@requires_credentials
+def test_invalid_token_raises_config_error(importer, tmp_path):
+    """A deliberately invalid token must surface IBKRConfigError, not [].
+
+    IBKR may answer with 1015 (Token is invalid) or 1020 (unable to validate
+    request) for a bogus token; both are permanent config failures.
+    """
+    cfg = tmp_path / "ibkr.yaml"
+    cfg.write_text(yaml.dump({"token": "0", "queryId": int(_query_id)}))
+    try:
+        with pytest.raises(IBKRConfigError) as excinfo:
+            importer.extract(str(cfg))
+    except Exception as e:
+        # Skip only clear transport failures — not every IBKRImportError, or a
+        # classification regression would be masked as "unreachable".
+        transport = (
+            "network error" in str(e).lower()
+            or "Max retries" in str(e)
+            or "Failed to resolve" in str(e)
+            or isinstance(
+                e,
+                (
+                    ConnectionError,
+                    TimeoutError,
+                ),
+            )
+        )
+        if transport:
+            pytest.skip(f"IBKR API unreachable from this environment: {e}")
+        raise
+    msg = str(excinfo.value)
+    assert "1015" in msg or "1020" in msg, msg
+    assert "token" in msg.lower()
 
 
 @requires_credentials

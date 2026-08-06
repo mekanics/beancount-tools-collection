@@ -19,7 +19,7 @@
 
 **International Institutions:**
 
-- **Interactive Brokers** - FlexQuery XML reports (global)
+- **Interactive Brokers** - FlexQuery XML reports (global); fetch/credential failures surface as errors in Fava and exit non-zero in the CLI (a genuinely empty statement still shows "No entries to import")
 - **Revolut** - CSV exports (multi-country)
 
 **Other Formats:**
@@ -176,6 +176,14 @@ Expenses:
   Taxes:
     WithholdingTax
 ```
+
+## Notes
+
+### Interactive Brokers errors (v1.1.0+)
+
+IBKR Flex fetch and credential failures (expired/invalid token, bad `ibkr.yaml`, network errors, unparseable statements) now raise typed errors instead of returning an empty entry list. In Fava this surfaces as an import/API error (rather than the yellow "No entries to import from this file." warning that used to appear on hard failures). The CLI exits non-zero with a short remediation message.
+
+Exception messages, log lines, and raised tracebacks redact the Flex token (and do not chain secret-bearing upstream exceptions). If older logs were shared while a token was still live, rotate the token under Reports > Flex Web Service.
 
 ## Contributing
 
