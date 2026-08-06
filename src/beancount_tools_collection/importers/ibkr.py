@@ -32,11 +32,14 @@ import re
 import numpy as np
 
 import yaml
+import requests
 from os import path
 from ibflex import client, parser, Types
 from ibflex.enums import CashAction, BuySell, Code
-from ibflex.client import ResponseCodeError
+from ibflex.client import BadResponseError, ResponseCodeError
+from ibflex.parser import FlexParserError
 from beangulp.importer import Importer
+from beangulp.exceptions import Error as BeangulpError
 
 from beanquery import query
 from beancount.parser import options
@@ -62,6 +65,123 @@ from loguru import logger
 _IBKR_CODE_ALIASES: dict[str, list[str]] = {
     "RI": ["I"],
 }
+
+
+class IBKRImportError(BeangulpError):
+    """Base: the IBKR statement could not be turned into entries.
+
+    Subclasses beangulp's Error so the CLI prints the message without a
+    traceback; Fava turns any exception into a visible error notification.
+    """
+
+
+class IBKRConfigError(IBKRImportError):
+    """Import cannot succeed until the user changes something.
+
+    Expired/invalid token, inactive service account, IP restriction,
+    invalid query id, unreadable or incomplete ibkr.yaml.
+    """
+
+
+class IBKRTemporaryError(IBKRImportError):
+    """IBKR is busy or throttling; the same request should work later."""
+
+
+class IBKRStatementError(IBKRImportError):
+    """A statement was returned but could not be parsed."""
+
+
+# Permanent Flex API codes: retrying changes nothing; the user must act.
+# Texts match ibflex.client.ERRORS and lead with the cause + remediation.
+_PERMANENT_CODES: dict[str, str] = {
+    "1010": (
+        "Legacy Flex Queries are no longer supported — recreate the query "
+        "as an Activity Flex query"
+    ),
+    "1011": (
+        "the IBKR Flex Web Service account is inactive — re-enable it under "
+        "Reports > Flex Web Service"
+    ),
+    "1012": (
+        "the IBKR Flex token has expired — generate a new token under "
+        "Reports > Flex Web Service and update 'token'"
+    ),
+    "1013": (
+        "IBKR rejected the request due to an IP restriction — allow this "
+        "machine's IP in the Flex Web Service settings"
+    ),
+    "1014": (
+        "the Flex query is invalid — check 'queryId' and that the query "
+        "still exists"
+    ),
+    "1015": (
+        "the IBKR Flex token is invalid — copy a fresh token into 'token'"
+    ),
+    "1016": "the IBKR account referenced by the query is invalid",
+    "1017": (
+        "the Flex reference code is invalid — retry; if it persists, "
+        "recreate the query"
+    ),
+    "1020": (
+        "IBKR could not validate the request — verify 'token' and 'queryId'"
+    ),
+}
+
+# Transient Flex API codes: the same request should succeed later.
+_TEMPORARY_CODES = frozenset(
+    {
+        "1003",
+        "1004",
+        "1005",
+        "1006",
+        "1007",
+        "1008",
+        "1009",
+        "1018",
+        "1019",
+        "1021",
+    }
+)
+
+
+def _redact(text: str, token: str) -> str:
+    """Replace the Flex token with '<redacted>' in text.
+
+    Always scrubs the URL query form ``t=<token>`` (how ``requests`` leaks the
+    Flex token). Blanket substring replacement only runs for tokens long enough
+    to be unique — short values like ``"0"`` must not scramble unrelated digits
+    (e.g. HTTP status ``403``).
+    """
+    if not token:
+        return text
+    text = str(text)
+    token = str(token)
+    text = text.replace(f"t={token}", "t=<redacted>")
+    if len(token) >= 8:
+        text = text.replace(token, "<redacted>")
+    return text
+
+
+def _classify_response_code_error(
+    error: ResponseCodeError, filepath: str
+) -> IBKRImportError:
+    """Map an IBKR Flex error code to one of our exceptions."""
+    code = error.code
+    if code in _PERMANENT_CODES:
+        return IBKRConfigError(
+            f"IBKR import failed: {_PERMANENT_CODES[code]} (code {code}) "
+            f"in {filepath}"
+        )
+    if code in _TEMPORARY_CODES:
+        return IBKRTemporaryError(
+            f"IBKR import failed: IBKR is busy or still generating the "
+            f"statement (code {code}: {error.msg}) — retry in a minute. "
+            f"Config: {filepath}"
+        )
+    return IBKRImportError(
+        f"IBKR import failed: unexpected Flex API error code {code}: "
+        f"{error.msg}. Config: {filepath}"
+    )
 
 
 class IBKRImporter(Importer):
@@ -331,50 +451,128 @@ class IBKRImporter(Importer):
 
         return re.sub(rb'notes="([^"]*)"', _filter, response)
 
+    def _load_credentials(self, filepath: str):
+        """Read token/queryId from the ibkr.yaml at filepath.
+
+        Raises:
+            IBKRConfigError: file missing, unreadable, not a mapping, or missing keys.
+        """
+        try:
+            with open(filepath, "r") as f:
+                config = yaml.safe_load(f)
+        except (OSError, yaml.YAMLError) as e:
+            raise IBKRConfigError(
+                f"IBKR import failed: cannot read credentials file '{filepath}': {e}"
+            ) from e
+
+        if not isinstance(config, dict):
+            raise IBKRConfigError(
+                f"IBKR import failed: credentials file '{filepath}' must be a "
+                f"YAML mapping with 'token' and 'queryId'"
+            )
+
+        missing = [
+            key
+            for key in ("token", "queryId")
+            if key not in config or config[key] in (None, "")
+        ]
+        if missing:
+            raise IBKRConfigError(
+                f"IBKR import failed: credentials file '{filepath}' is missing "
+                f"required key(s): {', '.join(missing)}"
+            )
+
+        return str(config["token"]), config["queryId"]
+
+    def _download_statement(self, token: str, queryId, filepath: str):
+        """Fetch and parse the Flex statement.
+
+        Raises:
+            IBKRConfigError, IBKRTemporaryError, IBKRStatementError, IBKRImportError
+        """
+        # Warning: queries sometimes take a few minutes until IB provides
+        # the data due to busy servers.
+        try:
+            response = client.download(token, queryId)
+            response = self._sanitize_ibkr_xml(response)
+            statement = parser.parse(response)
+        except ResponseCodeError as e:
+            # Safe to chain: ResponseCodeError messages are code + IBKR text only.
+            classified = _classify_response_code_error(e, filepath)
+            msg = _redact(str(classified), token)
+            logger.error(_redact(f"IBKR API responded with error code: {e}", token))
+            raise type(classified)(msg) from e
+        except FlexParserError as e:
+            # Safe to chain: parser errors describe XML/enums, not the Flex token.
+            msg = _redact(
+                f"IBKR import failed: could not parse Flex statement from "
+                f"'{filepath}': {e}. If this is an unknown note code, extend "
+                f"_IBKR_CODE_ALIASES.",
+                token,
+            )
+            logger.error(msg)
+            raise IBKRStatementError(msg) from e
+        except BadResponseError as e:
+            # Do not chain: BadResponseError's message is the raw response body.
+            status = getattr(e.response, "status_code", "?")
+            length = len(getattr(e.response, "content", b"") or b"")
+            msg = (
+                f"IBKR import failed: malformed Flex response "
+                f"(HTTP {status}, {length} bytes) for '{filepath}'"
+            )
+            logger.error(msg)
+            raise IBKRImportError(msg) from None
+        except requests.exceptions.RequestException as e:
+            # Do not chain: requests exceptions embed the URL including ?t=<token>.
+            # Fava surfaces traceback.format_exc(), which would otherwise leak it.
+            msg = _redact(
+                f"IBKR import failed: network error fetching statement for "
+                f"'{filepath}': {type(e).__name__}: {e}",
+                token,
+            )
+            logger.error(msg)
+            raise IBKRImportError(msg) from None
+        except Exception as e:
+            # Do not chain: unknown upstream errors may embed secrets.
+            msg = _redact(
+                f"IBKR import failed: unexpected error fetching/parsing "
+                f"statement for '{filepath}': {type(e).__name__}: {e}",
+                token,
+            )
+            logger.error(msg)
+            raise IBKRImportError(msg) from None
+
+        if not isinstance(statement, Types.FlexQueryResponse):
+            raise IBKRStatementError(
+                f"IBKR import failed: unexpected statement type "
+                f"{type(statement)!r} from '{filepath}'"
+            )
+        return statement
+
+    def _load_pickled_statement(self, fpath: str):
+        """Offline path for self.fpath. Raises IBKRStatementError on a bad pickle."""
+        logger.info(f"Loading IBKR statement from pickle: {fpath}")
+        try:
+            with open(fpath, "rb") as pf:
+                return pickle.load(pf)
+        except Exception as e:
+            raise IBKRStatementError(
+                f"IBKR import failed: cannot load pickled statement from "
+                f"'{fpath}': {type(e).__name__}: {e}"
+            ) from e
+
     def extract(self, filepath, existing=None):
         # the actual processing of the flex query
         
         # Store existing entries for cost basis lookup in corporate actions
         self._existing_entries = existing
 
-        # get the IBKR creentials ready
-        try:
-            with open(filepath, "r") as f:
-                config = yaml.safe_load(f)
-                token = config["token"]
-                queryId = config["queryId"]
-        except BaseException:
-            warnings.warn(
-                f"cannot read IBKR credentials file. Check filepath. '{filepath}'"
-            )
-            return []
+        token, queryId = self._load_credentials(filepath)
 
         if self.fpath is None:
-            # get the report from IB. might take a while, when IB is queuing due to
-            # traffic
-            try:
-                # try except in case of connection interrupt
-                # Warning: queries sometimes take a few minutes until IB provides
-                # the data due to busy servers
-                response = client.download(token, queryId)
-                response = self._sanitize_ibkr_xml(response)
-                statement = parser.parse(response)
-            except ResponseCodeError as E:
-                logger.error(f"IBKR API responded with error code: {E}")
-                warnings.warn(f"IBKR API error: {E}. Aborting.")
-                return []
-            except Exception as e:
-                import traceback
-                logger.error(f"Failed to fetch/parse IBKR statement: {type(e).__name__}: {e}")
-                logger.error(f"Full traceback:\n{traceback.format_exc()}")
-                warnings.warn(f"could not fetch IBKR Statement: {type(e).__name__}: {e}")
-                # another option would be to try again
-                return []
-            assert isinstance(statement, Types.FlexQueryResponse)
+            statement = self._download_statement(token, queryId, filepath)
         else:
-            print("**** loading from pickle")
-            with open(self.fpath, "rb") as pf:
-                statement = pickle.load(pf)
+            statement = self._load_pickled_statement(self.fpath)
 
         all_transactions = []
         
