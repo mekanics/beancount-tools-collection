@@ -1,20 +1,27 @@
 import json
-import pandas as pd
-import re
-from loguru import logger
-from datetime import datetime, timedelta
 import math
+import re
 
-from beangulp.importer import Importer
+import pandas as pd
+from beancount.core import amount, data
 from beancount.core.number import Decimal
-from beancount.core import data, amount
+from beangulp.importer import Importer
+from loguru import logger
 
 
 class VisecaImporter(Importer):
     """
     Beancount Importer for Viseca JSON transaction exports.
     """
-    def __init__(self, account="Liabilities:CreditCard:Viseca", regex=r"viseca.*\.json", category_map=None, split_expense_account=None, split_ratio=0.5):
+
+    def __init__(
+        self,
+        account="Liabilities:CreditCard:Viseca",
+        regex=r"viseca.*\.json",
+        category_map=None,
+        split_expense_account=None,
+        split_ratio=0.5,
+    ):
         self.main_account = account
         self.regex = regex
         self.flag = "*"
@@ -34,7 +41,9 @@ class VisecaImporter(Importer):
 
     def identify(self, filepath):
         result = bool(re.search(self.regex, filepath, re.IGNORECASE))
-        logger.info(f"identify assertion for viseca importer and file '{filepath}': {result}")
+        logger.info(
+            f"identify assertion for viseca importer and file '{filepath}': {result}"
+        )
         return result
 
     def account(self, filepath):
@@ -45,7 +54,7 @@ class VisecaImporter(Importer):
         entries = []
         with open(filepath, encoding="utf-8-sig") as f:
             data_json = json.load(f)
-        
+
         txs = data_json["list"]
         df = pd.json_normalize(txs)
 
@@ -94,20 +103,23 @@ class VisecaImporter(Importer):
                 amt = Decimal(str(row["amount"]))
                 # Viseca: negative = refund, positive = expense
                 amt = -amt if amt < 0 else amt
-        
+
                 expense_account = self.category_map.get(pfm_cat, "Expenses:Unknown")
-                
+
                 # Foreign currency handling
                 orig_amt = safe_value(row.get("originalAmount"))
                 orig_cur = safe_value(row.get("originalCurrency"))
                 postings = []
-                
+
                 # Main posting: always the credit card liability
                 postings.append(
                     data.Posting(
                         self.main_account,
                         amount.Amount(-amt, currency),
-                        None, None, None, None
+                        None,
+                        None,
+                        None,
+                        None,
                     )
                 )
                 # Expense posting(s)
@@ -115,23 +127,33 @@ class VisecaImporter(Importer):
                     # Split the amount according to split_ratio and round to 3 decimal places
                     amt_main = (amt * self.split_ratio).quantize(Decimal("0.001"))
                     amt_split = amt - amt_main  # Ensure total matches original
-                    
+
                     # Format amounts to 2 decimals if they end with 0, otherwise keep 3 decimals
                     def format_amount(amt):
-                        return amt.quantize(Decimal("0.01")) if amt % Decimal("0.01") == 0 else amt
-                    
+                        return (
+                            amt.quantize(Decimal("0.01"))
+                            if amt % Decimal("0.01") == 0
+                            else amt
+                        )
+
                     postings.append(
                         data.Posting(
                             expense_account,
                             amount.Amount(format_amount(amt_main), currency),
-                            None, None, None, None
+                            None,
+                            None,
+                            None,
+                            None,
                         )
                     )
                     postings.append(
                         data.Posting(
                             self.split_expense_account,
                             amount.Amount(format_amount(amt_split), currency),
-                            None, None, None, None
+                            None,
+                            None,
+                            None,
+                            None,
                         )
                     )
                 else:
@@ -139,10 +161,13 @@ class VisecaImporter(Importer):
                         data.Posting(
                             expense_account,
                             amount.Amount(amt, currency),
-                            None, None, None, None
+                            None,
+                            None,
+                            None,
+                            None,
                         )
                     )
-    
+
                 # # If foreign currency, add a posting for the original amount
                 # if orig_amt and orig_cur and orig_cur != currency:
                 #     postings.append(
@@ -152,7 +177,7 @@ class VisecaImporter(Importer):
                 #             None, None, None, None
                 #         )
                 #     )
-    
+
                 meta_dict = {
                     "transactionId": safe_value(row.get("transactionId")),
                     "category": safe_value(pfm_cat),
@@ -163,7 +188,9 @@ class VisecaImporter(Importer):
                 }
                 if orig_cur is not None and orig_cur != "CHF":
                     meta_dict["conversionRate"] = safe_value(row.get("conversionRate"))
-                    meta_dict["conversionRateDate"] = safe_value(row.get("conversionRateDate"))
+                    meta_dict["conversionRateDate"] = safe_value(
+                        row.get("conversionRateDate")
+                    )
 
                 # Drop None entries and stringify any residual floats so nothing
                 # NaN-shaped slips into Fava's JSON encoder.

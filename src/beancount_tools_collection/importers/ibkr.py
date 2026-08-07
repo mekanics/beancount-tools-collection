@@ -23,32 +23,23 @@ To obtain these credentials:
 6. Note the Query ID - this becomes your 'queryId' value
 """
 
-import pandas as pd
-from datetime import datetime, timedelta
-import xml.etree.ElementTree as ET
-import warnings
 import pickle
 import re
-import numpy as np
-
-import yaml
-import requests
+import warnings
+from datetime import datetime, timedelta
 from os import path
-from ibflex import client, parser, Types
-from ibflex.enums import CashAction, BuySell, Code
-from ibflex.client import BadResponseError, ResponseCodeError
-from ibflex.parser import FlexParserError
-from beangulp.importer import Importer
+
+import pandas as pd
+import requests
+import yaml
+from beancount.core import amount, data, position
+from beancount.core.number import D, Decimal
 from beangulp.exceptions import Error as BeangulpError
-
-from beanquery import query
-from beancount.parser import options
-from beancount.core import data, amount
-from beancount.core.number import D
-from beancount.core.number import Decimal
-from beancount.core import position
-from beancount.core.number import MISSING
-
+from beangulp.importer import Importer
+from ibflex import Types, client, parser
+from ibflex.client import BadResponseError, ResponseCodeError
+from ibflex.enums import BuySell, CashAction, Code
+from ibflex.parser import FlexParserError
 from loguru import logger
 
 # Maps IBKR note codes that are unknown to ibflex to their closest known equivalents.
@@ -111,20 +102,14 @@ _PERMANENT_CODES: dict[str, str] = {
         "machine's IP in the Flex Web Service settings"
     ),
     "1014": (
-        "the Flex query is invalid — check 'queryId' and that the query "
-        "still exists"
+        "the Flex query is invalid — check 'queryId' and that the query still exists"
     ),
-    "1015": (
-        "the IBKR Flex token is invalid — copy a fresh token into 'token'"
-    ),
+    "1015": ("the IBKR Flex token is invalid — copy a fresh token into 'token'"),
     "1016": "the IBKR account referenced by the query is invalid",
     "1017": (
-        "the Flex reference code is invalid — retry; if it persists, "
-        "recreate the query"
+        "the Flex reference code is invalid — retry; if it persists, recreate the query"
     ),
-    "1020": (
-        "IBKR could not validate the request — verify 'token' and 'queryId'"
-    ),
+    "1020": ("IBKR could not validate the request — verify 'token' and 'queryId'"),
 }
 
 # Transient Flex API codes: the same request should succeed later.
@@ -169,8 +154,7 @@ def _classify_response_code_error(
     code = error.code
     if code in _PERMANENT_CODES:
         return IBKRConfigError(
-            f"IBKR import failed: {_PERMANENT_CODES[code]} (code {code}) "
-            f"in {filepath}"
+            f"IBKR import failed: {_PERMANENT_CODES[code]} (code {code}) in {filepath}"
         )
     if code in _TEMPORARY_CODES:
         return IBKRTemporaryError(
@@ -214,13 +198,13 @@ class IBKRImporter(Importer):
     - cashAccountType: What to replace stockAccountType with for cash accounts (default: "Cash")
     - stockAccountType: The account type to replace for cash accounts (default: "Stocks")
     - Example configurations:
-      
+
       Default behavior (stockAccountType="Stocks", cashAccountType="Cash"):
       - Mainaccount="Assets:Stocks:IB" -> Cash account: "Assets:Cash:IB"
-      
+
       Custom configuration (stockAccountType="Invest", cashAccountType="Liquidity"):
       - Mainaccount="Assets:Invest:IB" -> Cash account: "Assets:Liquidity:IB"
-      
+
       GnuCash-style (stockAccountType="Investment", cashAccountType="Current"):
       - Mainaccount="Assets:Investment:IB" -> Cash account: "Assets:Current:IB"
 
@@ -272,7 +256,7 @@ class IBKRImporter(Importer):
         self.flag = "*"
         self.configFile = configFile
         self._account_alias = None  # Will be set when processing statements
-        
+
         # Configurable account type mappings
         self.cashAccountType = cashAccountType
         self.stockAccountType = stockAccountType
@@ -297,7 +281,9 @@ class IBKRImporter(Importer):
             filter(
                 None,
                 [
-                    self.Mainaccount.replace(self.stockAccountType, self.cashAccountType),
+                    self.Mainaccount.replace(
+                        self.stockAccountType, self.cashAccountType
+                    ),
                     self._account_alias,
                     currency,
                 ],
@@ -320,7 +306,7 @@ class IBKRImporter(Importer):
         if account_parts[0] == "Assets":
             account_parts[0] = "Income"
         income_base = ":".join(account_parts)
-        
+
         return ":".join(
             filter(
                 None,
@@ -365,38 +351,30 @@ class IBKRImporter(Importer):
     def _get_cost_basis_from_existing(self, account, symbol, as_of_date=None):
         """
         Query existing beancount entries to get the total cost basis for a symbol.
-        
+
         Args:
             account: The beancount account holding the position
             symbol: The commodity/stock symbol
             as_of_date: Optional date to query as of (defaults to all entries)
-            
+
         Returns:
             Tuple of (total_cost_basis, total_units, cost_currency) or (None, None, None) if not found
         """
         if not self._existing_entries:
             logger.warning("No existing entries available for cost basis lookup")
             return None, None, None
-        
+
         try:
             # Build query to get holdings with cost basis
-            query_str = f"""
-                SELECT sum(units(position)) as units, 
-                       sum(cost(position)) as cost_basis
-                FROM open_at(Filtered, date('{as_of_date}')) if '{as_of_date}' else open
-                WHERE account = '{account}'
-                AND currency(units(position)) = '{symbol}'
-            """
-            
+
             # Simpler approach: iterate through entries to calculate cost basis
-            from beancount.core import inventory
             from beancount.core import realization
-            
+
             # Create a realization of the accounts
             real_account = realization.realize(self._existing_entries)
-            
+
             # Navigate to the specific account
-            account_parts = account.split(':')
+            account_parts = account.split(":")
             current = real_account
             for part in account_parts:
                 if part in current:
@@ -404,10 +382,10 @@ class IBKRImporter(Importer):
                 else:
                     logger.info(f"Account {account} not found in existing entries")
                     return None, None, None
-            
+
             # Get the balance (inventory) for this account
             balance = current.balance
-            
+
             # Find the position for our symbol
             for pos in balance:
                 if pos.units.currency == symbol:
@@ -415,12 +393,14 @@ class IBKRImporter(Importer):
                     if pos.cost and pos.cost.number is not None:
                         total_cost = pos.units.number * pos.cost.number
                         cost_currency = pos.cost.currency
-                        logger.info(f"Found cost basis for {symbol}: {total_units} units, {total_cost} {cost_currency}")
+                        logger.info(
+                            f"Found cost basis for {symbol}: {total_units} units, {total_cost} {cost_currency}"
+                        )
                         return total_cost, total_units, cost_currency
-            
+
             logger.info(f"No position found for {symbol} in {account}")
             return None, None, None
-            
+
         except Exception as e:
             logger.warning(f"Error querying cost basis: {e}")
             return None, None, None
@@ -444,7 +424,9 @@ class IBKRImporter(Importer):
                     expanded.append(c)
                 elif c in _IBKR_CODE_ALIASES:
                     expanded.extend(_IBKR_CODE_ALIASES[c])
-                    logger.debug(f"Mapped unknown IBKR note code '{c}' -> {_IBKR_CODE_ALIASES[c]}")
+                    logger.debug(
+                        f"Mapped unknown IBKR note code '{c}' -> {_IBKR_CODE_ALIASES[c]}"
+                    )
                 elif c:
                     logger.warning(f"Dropped unrecognised IBKR note code: '{c}'")
             return b'notes="' + ";".join(expanded).encode() + b'"'
@@ -458,7 +440,7 @@ class IBKRImporter(Importer):
             IBKRConfigError: file missing, unreadable, not a mapping, or missing keys.
         """
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 config = yaml.safe_load(f)
         except (OSError, yaml.YAMLError) as e:
             raise IBKRConfigError(
@@ -563,7 +545,7 @@ class IBKRImporter(Importer):
 
     def extract(self, filepath, existing=None):
         # the actual processing of the flex query
-        
+
         # Store existing entries for cost basis lookup in corporate actions
         self._existing_entries = existing
 
@@ -575,21 +557,26 @@ class IBKRImporter(Importer):
             statement = self._load_pickled_statement(self.fpath)
 
         all_transactions = []
-        
+
         # Process each FlexStatement
         for flex_stmt in statement.FlexStatements:
             # Get account alias for this statement
-            if hasattr(flex_stmt, 'AccountInformation'):
+            if hasattr(flex_stmt, "AccountInformation"):
                 raw_alias = flex_stmt.AccountInformation.acctAlias
                 self._account_alias = self._format_account_alias(raw_alias)
-                logger.info(f"Processing statement for account alias: {self._account_alias} (original: {raw_alias})")
+                logger.info(
+                    f"Processing statement for account alias: {self._account_alias} (original: {raw_alias})"
+                )
             else:
-                warnings.warn(f"Could not find account alias in FlexStatement for account {flex_stmt.accountId}")
+                warnings.warn(
+                    f"Could not find account alias in FlexStatement for account {flex_stmt.accountId}",
+                    stacklevel=2,
+                )
                 self._account_alias = None
 
             # relevant items from report
             reports = ["CashReport", "Trades", "CashTransactions", "CorporateActions"]
-            
+
             tabs = {
                 report: pd.DataFrame(
                     [
@@ -611,9 +598,14 @@ class IBKRImporter(Importer):
             tr.drop(columns=[col for col in tr if all(tr[col].isnull())], inplace=True)
             cr.drop(columns=[col for col in cr if all(cr[col].isnull())], inplace=True)
             ca.drop(columns=[col for col in ca if all(ca[col].isnull())], inplace=True)
-            
+
             # Process transactions for this statement
-            transactions = self.Trades(tr) + self.CashTransactions(ct) + self.Balances(cr) + self.CorporateActions(ca)
+            transactions = (
+                self.Trades(tr)
+                + self.CashTransactions(ct)
+                + self.Balances(cr)
+                + self.CorporateActions(ca)
+            )
             all_transactions.extend(transactions)
 
         return all_transactions
@@ -632,14 +624,18 @@ class IBKRImporter(Importer):
         # First, extract all dividend and WHT entries
         div_wht = ct[
             ct["type"].map(
-                lambda t: t == CashAction.DIVIDEND 
-                or t == CashAction.PAYMENTINLIEU 
-                or t == CashAction.WHTAX
+                lambda t: (
+                    t == CashAction.DIVIDEND
+                    or t == CashAction.PAYMENTINLIEU
+                    or t == CashAction.WHTAX
+                )
             )
         ].copy()
 
         # Process combined dividend and WHT transactions
-        div_wht_transactions = self.ProcessDividendsAndWHT(div_wht) if not div_wht.empty else []
+        div_wht_transactions = (
+            self.ProcessDividendsAndWHT(div_wht) if not div_wht.empty else []
+        )
 
         # Process other transaction types
         dep = ct[ct["type"] == CashAction.DEPOSITWITHDRAW].copy()
@@ -659,10 +655,10 @@ class IBKRImporter(Importer):
 
     def ProcessDividendsAndWHT(self, div_wht):
         """Process Dividend and WHT entries together.
-        
+
         Args:
             div_wht: DataFrame containing both dividend and WHT entries
-        
+
         Returns:
             List of beancount transactions
         """
@@ -670,44 +666,53 @@ class IBKRImporter(Importer):
             return []
 
         # Extract key information for matching
-        div_wht['div_rate'] = div_wht['description'].apply(
-            lambda d: re.search(r'USD ([\d.]+) PER SHARE', d).group(1) 
-            if re.search(r'USD ([\d.]+) PER SHARE', d) else None
+        div_wht["div_rate"] = div_wht["description"].apply(
+            lambda d: (
+                re.search(r"USD ([\d.]+) PER SHARE", d).group(1)
+                if re.search(r"USD ([\d.]+) PER SHARE", d)
+                else None
+            )
         )
-        div_wht['isin'] = div_wht['description'].apply(
-            lambda d: re.search(r'\((.*?)\)', d).group(1) 
-            if re.search(r'\((.*?)\)', d) else None
+        div_wht["isin"] = div_wht["description"].apply(
+            lambda d: (
+                re.search(r"\((.*?)\)", d).group(1)
+                if re.search(r"\((.*?)\)", d)
+                else None
+            )
         )
-        div_wht['is_correction'] = div_wht['description'].str.contains('CORRECTION', case=False)
+        div_wht["is_correction"] = div_wht["description"].str.contains(
+            "CORRECTION", case=False
+        )
 
         # Create a matching key for grouping related entries
-        div_wht['group_key'] = div_wht.apply(
-            lambda row: f"{row['symbol']}_{row['div_rate']}_{row['reportDate']}",
-            axis=1
+        div_wht["group_key"] = div_wht.apply(
+            lambda row: f"{row['symbol']}_{row['div_rate']}_{row['reportDate']}", axis=1
         )
 
         transactions = []
-        
+
         # Group by the matching key to process related entries together
-        for group_key, group in div_wht.groupby('group_key'):
+        for group_key, group in div_wht.groupby("group_key"):
             if group.empty:
                 continue
 
-            symbol = group.iloc[0]['symbol']
-            date = group.iloc[0]['reportDate']
-            currency = group.iloc[0]['currency']
-            div_rate = group.iloc[0]['div_rate']
-            isin = group.iloc[0]['isin']
+            symbol = group.iloc[0]["symbol"]
+            date = group.iloc[0]["reportDate"]
+            currency = group.iloc[0]["currency"]
+            div_rate = group.iloc[0]["div_rate"]
+            isin = group.iloc[0]["isin"]
 
             # Separate dividend and WHT entries
-            div_entries = group[group['type'].map(
-                lambda t: t == CashAction.DIVIDEND or t == CashAction.PAYMENTINLIEU
-            )]
-            wht_entries = group[group['type'] == CashAction.WHTAX]
+            div_entries = group[
+                group["type"].map(
+                    lambda t: t == CashAction.DIVIDEND or t == CashAction.PAYMENTINLIEU
+                )
+            ]
+            wht_entries = group[group["type"] == CashAction.WHTAX]
 
             # Calculate totals
-            total_div = sum(div_entries['amount'])
-            total_wht = sum(wht_entries['amount'])
+            total_div = sum(div_entries["amount"])
+            total_wht = sum(wht_entries["amount"])
 
             # Skip if we don't have both dividend and WHT (might be in different reports)
             if div_entries.empty or wht_entries.empty:
@@ -723,15 +728,19 @@ class IBKRImporter(Importer):
                 continue
 
             # Create metadata with all related entries
-            meta = data.new_metadata("dividend", 0, {
-                "symbol": symbol,
-                "isin": isin,
-                "dividend_rate": div_rate,
-                "dividend_entries": "\n".join(div_entries['description'].tolist()),
-                "wht_entries": "\n".join(wht_entries['description'].tolist()),
-                "is_correction": "1" if any(group['is_correction']) else "0",
-                "correction_group": group_key
-            })
+            meta = data.new_metadata(
+                "dividend",
+                0,
+                {
+                    "symbol": symbol,
+                    "isin": isin,
+                    "dividend_rate": div_rate,
+                    "dividend_entries": "\n".join(div_entries["description"].tolist()),
+                    "wht_entries": "\n".join(wht_entries["description"].tolist()),
+                    "is_correction": "1" if any(group["is_correction"]) else "0",
+                    "correction_group": group_key,
+                },
+            )
 
             # Create postings
             postings = [
@@ -739,26 +748,34 @@ class IBKRImporter(Importer):
                 data.Posting(
                     self.getDivIncomeAccount(currency, symbol),
                     minus(amount.Amount(total_div, currency)),
-                    None, None, None, None
+                    None,
+                    None,
+                    None,
+                    None,
                 ),
                 # WHT posting
                 data.Posting(
                     self.getWHTAccount(),
                     minus(amount.Amount(total_wht, currency)),
-                    None, None, None, None
+                    None,
+                    None,
+                    None,
+                    None,
                 ),
                 # Net cash posting
                 data.Posting(
                     self.getLiquidityAccount(currency),
                     amount.Amount(total_div + total_wht, currency),
-                    None, None, None, None
+                    None,
+                    None,
+                    None,
+                    None,
                 ),
             ]
 
             # Create transaction
-            narration = (
-                f"Dividend {symbol} ({div_rate} USD per share)"
-                + (" - Correction" if any(group['is_correction']) else "")
+            narration = f"Dividend {symbol} ({div_rate} USD per share)" + (
+                " - Correction" if any(group["is_correction"]) else ""
             )
 
             transactions.append(
@@ -788,24 +805,29 @@ class IBKRImporter(Importer):
             currency = row["currency"]
             symbol = row["symbol"]
             amount_ = amount.Amount(row["amount"], currency)
-            
-            meta = data.new_metadata("dividend", 0, {
-                "symbol": symbol,
-                "isin": row.get('isin'),
-                "original_description": row["description"],
-                "awaiting_wht": True  # Flag that this might be matched later
-            })
+
+            meta = data.new_metadata(
+                "dividend",
+                0,
+                {
+                    "symbol": symbol,
+                    "isin": row.get("isin"),
+                    "original_description": row["description"],
+                    "awaiting_wht": True,  # Flag that this might be matched later
+                },
+            )
 
             postings = [
                 data.Posting(
                     self.getDivIncomeAccount(currency, symbol),
                     minus(amount_),
-                    None, None, None, None
+                    None,
+                    None,
+                    None,
+                    None,
                 ),
                 data.Posting(
-                    self.getLiquidityAccount(currency),
-                    amount_,
-                    None, None, None, None
+                    self.getLiquidityAccount(currency), amount_, None, None, None, None
                 ),
             ]
 
@@ -830,24 +852,24 @@ class IBKRImporter(Importer):
             currency = row["currency"]
             symbol = row["symbol"]
             amount_ = amount.Amount(row["amount"], currency)
-            
-            meta = data.new_metadata("WHT", 0, {
-                "symbol": symbol,
-                "isin": row.get('isin'),
-                "original_description": row["description"],
-                "awaiting_dividend": True  # Flag that this might be matched later
-            })
+
+            meta = data.new_metadata(
+                "WHT",
+                0,
+                {
+                    "symbol": symbol,
+                    "isin": row.get("isin"),
+                    "original_description": row["description"],
+                    "awaiting_dividend": True,  # Flag that this might be matched later
+                },
+            )
 
             postings = [
                 data.Posting(
-                    self.getWHTAccount(),
-                    minus(amount_),
-                    None, None, None, None
+                    self.getWHTAccount(), minus(amount_), None, None, None, None
                 ),
                 data.Posting(
-                    self.getLiquidityAccount(currency),
-                    amount_,
-                    None, None, None, None
+                    self.getLiquidityAccount(currency), amount_, None, None, None, None
                 ),
             ]
 
@@ -868,7 +890,7 @@ class IBKRImporter(Importer):
     def Fee(self, fee):
         # calculates fees from IBKR data
         feeTransactions = []
-        for idx, row in fee.iterrows():
+        for _idx, row in fee.iterrows():
             currency = row["currency"]
             amount_ = amount.Amount(row["amount"], currency)
             text = row["description"]
@@ -876,9 +898,9 @@ class IBKRImporter(Importer):
 
             try:
                 month = re.findall("\\w{3} \\d{4}", text)[0]
-            except:
+            except Exception:
                 # just ignore
-                warnings.warn(f"No month found in '{text}'")
+                warnings.warn(f"No month found in '{text}'", stacklevel=2)
 
             # make the postings, two for fees
             postings = [
@@ -907,7 +929,7 @@ class IBKRImporter(Importer):
     def Interest(self, int_):
         # calculates interest payments from IBKR data
         intTransactions = []
-        for idx, row in int_.iterrows():
+        for _idx, row in int_.iterrows():
             currency = row["currency"]
             amount_ = amount.Amount(row["amount"], currency)
             text = row["description"]
@@ -950,7 +972,7 @@ class IBKRImporter(Importer):
         # assumes you figured out how to deposit/ withdrawal without fees
         if len(self.depositAccount) == 0:  # control this from the config file
             return []
-        for idx, row in dep.iterrows():
+        for _idx, row in dep.iterrows():
             currency = row["currency"]
             amount_ = amount.Amount(row["amount"], currency)
 
@@ -998,7 +1020,7 @@ class IBKRImporter(Importer):
         # returns beancount transactions for IBKR forex transactions
 
         fxTransactions = []
-        for idx, row in fx.iterrows():
+        for _idx, row in fx.iterrows():
             symbol = row["symbol"]
             curr_prim, curr_sec = getForexCurrencies(symbol)
             currency_IBcommision = row["ibCommissionCurrency"]
@@ -1010,7 +1032,7 @@ class IBKRImporter(Importer):
             )
             buysell = row["buySell"].name
 
-            cost = position.CostSpec(
+            position.CostSpec(
                 number_per=None,
                 number_total=None,
                 currency=None,
@@ -1090,7 +1112,7 @@ class IBKRImporter(Importer):
         # let's go shopping!!
 
         Shoppingbag = []
-        for idx, row in buy.iterrows():
+        for _idx, row in buy.iterrows():
             # continue # debugging
             currency = row["currency"]
             currency_IBcommision = row["ibCommissionCurrency"]
@@ -1101,10 +1123,9 @@ class IBKRImporter(Importer):
             )
             quantity = amount.Amount(row["quantity"], symbol)
             price = amount.Amount(row["tradePrice"], currency)
-            text = row["description"]
+            row["description"]
 
-            number_per = D(row["tradePrice"])
-            currency_cost = currency
+            D(row["tradePrice"])
             cost = position.CostSpec(
                 number_per=price.number,
                 number_total=None,
@@ -1139,7 +1160,11 @@ class IBKRImporter(Importer):
                 ),
             ]
 
-            tags = frozenset({"drip"}) if Code.REINVESTMENT in row.get("notes", ()) else data.EMPTY_SET
+            tags = (
+                frozenset({"drip"})
+                if Code.REINVESTMENT in row.get("notes", ())
+                else data.EMPTY_SET
+            )
 
             Shoppingbag.append(
                 data.Transaction(
@@ -1170,10 +1195,9 @@ class IBKRImporter(Importer):
             )
             quantity = amount.Amount(row["quantity"], symbol)
             price = amount.Amount(row["tradePrice"], currency)
-            text = row["description"]
+            row["description"]
             date = row["dateTime"].date()
-            number_per = D(row["tradePrice"])
-            currency_cost = currency
+            D(row["tradePrice"])
 
             # Closed lot rows (potentially multiple) follow sell row
             lotpostings = []
@@ -1182,7 +1206,7 @@ class IBKRImporter(Importer):
             # symbol must match; begin at the row after the sell row
             # we do not know the number of lot rows; stop iteration if quantity is enough
             mylots = lots[(lots["symbol"] == row["symbol"]) & (lots.index > idx)]
-            for li, clo in mylots.iterrows():
+            for _li, clo in mylots.iterrows():
                 sum_lots_quantity += clo["quantity"]
                 if sum_lots_quantity > -row["quantity"]:
                     # oops, too many lots (warning issued below)
@@ -1218,7 +1242,7 @@ class IBKRImporter(Importer):
                     break
 
             if sum_lots_quantity != -row["quantity"]:
-                warnings.warn(f"Lots matching failure: sell index={idx}")
+                warnings.warn(f"Lots matching failure: sell index={idx}", stacklevel=2)
 
             postings = (
                 [
@@ -1275,19 +1299,12 @@ class IBKRImporter(Importer):
         # generate Balance statements from IBKR Cash reports
         # balances
         crTransactions = []
-        for idx, row in cr.iterrows():
+        for _idx, row in cr.iterrows():
             currency = row["currency"]
             if currency == "BASE_SUMMARY":
                 continue  # this is a summary balance that is not needed for beancount
             amount_ = amount.Amount(row["endingCash"].__round__(2), currency)
 
-            # make the postings. two for deposits
-            postings = [
-                data.Posting(self.depositAccount, -amount_, None, None, None, None),
-                data.Posting(
-                    self.getLiquidityAccount(currency), amount_, None, None, None, None
-                ),
-            ]
             meta = data.new_metadata("balance", 0)
 
             crTransactions.append(
@@ -1305,10 +1322,10 @@ class IBKRImporter(Importer):
     def CorporateActions(self, ca):
         """
         Process corporate actions from IBKR data, including forward and reverse stock splits.
-        
+
         Args:
             ca: pandas DataFrame with corporate actions data
-            
+
         Returns:
             List of beancount transactions for corporate actions
         """
@@ -1316,24 +1333,28 @@ class IBKRImporter(Importer):
             return []
 
         caTransactions = []
-        
+
         # Process forward splits (FS)
-        forward_splits = ca[ca["type"].astype(str).str.contains("FS", case=False, na=False)].copy()
+        forward_splits = ca[
+            ca["type"].astype(str).str.contains("FS", case=False, na=False)
+        ].copy()
         caTransactions.extend(self._process_forward_splits(forward_splits))
-        
+
         # Process reverse splits (RS)
-        reverse_splits = ca[ca["type"].astype(str).str.contains("RS", case=False, na=False)].copy()
+        reverse_splits = ca[
+            ca["type"].astype(str).str.contains("RS", case=False, na=False)
+        ].copy()
         caTransactions.extend(self._process_reverse_splits(reverse_splits))
-        
+
         return caTransactions
 
     def _process_forward_splits(self, splits):
         """
         Process forward stock splits from IBKR data.
-        
+
         Args:
             splits: pandas DataFrame with forward split corporate actions
-            
+
         Returns:
             List of beancount transactions for forward splits
         """
@@ -1341,43 +1362,51 @@ class IBKRImporter(Importer):
             return []
 
         transactions = []
-        
-        for idx, row in splits.iterrows():
+
+        for _idx, row in splits.iterrows():
             symbol = row["symbol"]
             currency = row["currency"]
             split_quantity = amount.Amount(D(str(row["quantity"])), symbol)
-            date = row["dateTime"].date() if hasattr(row["dateTime"], 'date') else row["reportDate"]
-            
+            date = (
+                row["dateTime"].date()
+                if hasattr(row["dateTime"], "date")
+                else row["reportDate"]
+            )
+
             # Extract split ratio from description (e.g., "SPLIT 4 FOR 1")
             description = row["actionDescription"]
-            split_match = re.search(r'SPLIT (\d+) FOR (\d+)', description)
+            split_match = re.search(r"SPLIT (\d+) FOR (\d+)", description)
             if split_match:
                 new_shares = split_match.group(1)
                 old_shares = split_match.group(2)
                 split_ratio = f"{new_shares}:{old_shares}"
             else:
                 split_ratio = "unknown"
-            
+
             # Create metadata
-            meta = data.new_metadata("stock_split", 0, {
-                "symbol": symbol,
-                "isin": row.get("isin", ""),
-                "split_ratio": split_ratio,
-                "split_type": "forward",
-                "split_description": description,
-            })
-            
+            meta = data.new_metadata(
+                "stock_split",
+                0,
+                {
+                    "symbol": symbol,
+                    "isin": row.get("isin", ""),
+                    "split_ratio": split_ratio,
+                    "split_type": "forward",
+                    "split_description": description,
+                },
+            )
+
             # For stock splits, we receive additional shares at zero cost
             # The cost basis is adjusted automatically by beancount when using zero cost
             cost = position.CostSpec(
-                number_per=D('0'),  # Zero cost for stock split shares
+                number_per=D("0"),  # Zero cost for stock split shares
                 number_total=None,
                 currency=currency,
                 date=date,
                 label=None,
                 merge=False,
             )
-            
+
             # Create postings - only one posting needed for stock splits
             # Beancount will automatically balance with an Equity account
             postings = [
@@ -1390,10 +1419,10 @@ class IBKRImporter(Importer):
                     None,
                 ),
             ]
-            
+
             # Create transaction
             narration = f"Stock split {symbol} ({split_ratio})"
-            
+
             transactions.append(
                 data.Transaction(
                     meta,
@@ -1406,26 +1435,28 @@ class IBKRImporter(Importer):
                     postings,
                 )
             )
-            
-            logger.info(f"Processed forward stock split: {date} {symbol} {split_ratio} (+{split_quantity})")
-        
+
+            logger.info(
+                f"Processed forward stock split: {date} {symbol} {split_ratio} (+{split_quantity})"
+            )
+
         return transactions
 
     def _process_reverse_splits(self, splits):
         """
         Process reverse stock splits from IBKR data.
-        
+
         Reverse splits have two paired entries that need to be matched:
         - Removal entry: negative quantity (old shares removed)
         - Addition entry: positive quantity (new consolidated shares added)
-        
+
         Pairing strategy:
         1. If actionID is available, group by actionID (preferred)
         2. If actionID is not available (e.g., in ibflex), group by dateTime + underlyingSymbol + type
-        
+
         Args:
             splits: pandas DataFrame with reverse split corporate actions
-            
+
         Returns:
             List of beancount transactions for reverse splits
         """
@@ -1433,7 +1464,7 @@ class IBKRImporter(Importer):
             return []
 
         transactions = []
-        
+
         # Group by actionID or fallback to dateTime + underlyingSymbol + type
         # This is an alternative to actionID which may not be available in ibflex
         grouping_columns = []
@@ -1445,54 +1476,58 @@ class IBKRImporter(Importer):
             # Use underlyingSymbol instead of symbol because the symbol changes in splits
             # but underlyingSymbol stays the same for paired entries
             grouping_columns = ["dateTime", "underlyingSymbol", "type"]
-            logger.debug("actionID not available, using dateTime+underlyingSymbol+type for reverse split grouping")
-        
+            logger.debug(
+                "actionID not available, using dateTime+underlyingSymbol+type for reverse split grouping"
+            )
+
         for group_key, group in splits.groupby(grouping_columns):
             # Identify removal (negative qty) and addition (positive qty) entries
             removal = group[group["quantity"] < 0]
             addition = group[group["quantity"] > 0]
-            
+
             if removal.empty or addition.empty:
-                group_desc = group_key if isinstance(group_key, (str, int)) else str(group_key)
+                group_desc = (
+                    group_key if isinstance(group_key, (str, int)) else str(group_key)
+                )
                 logger.warning(f"Incomplete reverse split pair for group {group_desc}")
                 continue
-            
+
             # Extract data from both entries
             removal_row = removal.iloc[0]
             addition_row = addition.iloc[0]
-            
+
             old_symbol = removal_row["symbol"]
             new_symbol = addition_row["symbol"]
             old_qty = abs(removal_row["quantity"])
             new_qty = addition_row["quantity"]
             currency = addition_row["currency"]
-            
+
             # Parse date - handle both dateTime formats
             date_value = addition_row["dateTime"]
-            if hasattr(date_value, 'date'):
+            if hasattr(date_value, "date"):
                 date = date_value.date()
             elif isinstance(date_value, str) and ";" in date_value:
                 # Handle format like "20251205;202500"
                 date = datetime.strptime(date_value.split(";")[0], "%Y%m%d").date()
             else:
                 date = addition_row["reportDate"]
-            
+
             # Extract split ratio from description (e.g., "SPLIT 1 FOR 5")
             description = addition_row["actionDescription"]
-            split_match = re.search(r'SPLIT (\d+) FOR (\d+)', description)
+            split_match = re.search(r"SPLIT (\d+) FOR (\d+)", description)
             if split_match:
                 new_shares = split_match.group(1)
                 old_shares = split_match.group(2)
                 split_ratio = f"{new_shares}:{old_shares}"
             else:
                 split_ratio = "unknown"
-            
+
             # Try to get cost basis from existing entries
             asset_account = self.getAssetAccount(new_symbol)
             total_cost, total_units, cost_currency = self._get_cost_basis_from_existing(
                 asset_account, new_symbol
             )
-            
+
             # Calculate new per-share cost if we found the original cost basis
             cost_basis_found = total_cost is not None and total_units is not None
             if cost_basis_found and total_cost is not None:
@@ -1506,14 +1541,14 @@ class IBKRImporter(Importer):
                 )
             else:
                 # Fallback to zero cost with warning
-                new_cost_per_share = D('0')
+                new_cost_per_share = D("0")
                 cost_currency = currency
                 narration_suffix = " - REVIEW COST BASIS"
                 logger.warning(
                     f"Could not determine cost basis for {new_symbol} in {asset_account}. "
                     f"Using zero cost - manual adjustment required."
                 )
-            
+
             # Create metadata
             meta_dict = {
                 "symbol": new_symbol,
@@ -1523,7 +1558,7 @@ class IBKRImporter(Importer):
                 "split_type": "reverse",
                 "split_description": description,
             }
-            
+
             # Add actionID to metadata if available, otherwise use group key info
             if "actionID" in splits.columns:
                 meta_dict["actionID"] = str(group_key)
@@ -1532,9 +1567,9 @@ class IBKRImporter(Importer):
             if cost_basis_found:
                 meta_dict["original_total_cost"] = str(total_cost)
                 meta_dict["original_units"] = str(total_units)
-            
+
             meta = data.new_metadata("reverse_split", 0, meta_dict)
-            
+
             # Cost spec for removal - use None/empty to match any existing lot
             cost_removal = position.CostSpec(
                 number_per=None,
@@ -1544,7 +1579,7 @@ class IBKRImporter(Importer):
                 label=None,
                 merge=False,
             )
-            
+
             # Cost spec for addition - use calculated cost basis or zero if not found
             cost_addition = position.CostSpec(
                 number_per=new_cost_per_share,
@@ -1554,7 +1589,7 @@ class IBKRImporter(Importer):
                 label=None,
                 merge=False,
             )
-            
+
             # Create postings using the clean symbol for both sides
             # This ensures the removal matches existing lots under the clean symbol (e.g., MSTY)
             # rather than the timestamped symbol IBKR uses internally (e.g., 20251205172827MSTY)
@@ -1576,10 +1611,12 @@ class IBKRImporter(Importer):
                     None,
                 ),
             ]
-            
+
             # Create transaction
-            narration = f"Reverse stock split {new_symbol} ({split_ratio}){narration_suffix}"
-            
+            narration = (
+                f"Reverse stock split {new_symbol} ({split_ratio}){narration_suffix}"
+            )
+
             transactions.append(
                 data.Transaction(
                     meta,
@@ -1592,12 +1629,12 @@ class IBKRImporter(Importer):
                     postings,
                 )
             )
-            
+
             logger.info(
                 f"Processed reverse stock split: {date} {new_symbol} "
                 f"({split_ratio}): -{old_qty} -> +{new_qty} @ {new_cost_per_share} {cost_currency}"
             )
-        
+
         return transactions
 
 
@@ -1652,9 +1689,7 @@ def AmountAdd(A1, A2):
         return amount.Amount(quant, A1.currency)
     else:
         raise (
-            "Cannot add amounts of differnent currencies: {} and {}".format(
-                A1.currency, A1.currency
-            )
+            f"Cannot add amounts of differnent currencies: {A1.currency} and {A1.currency}"
         )
 
 

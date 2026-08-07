@@ -41,12 +41,11 @@ dependencies = [
 dev = [
     "pytest>=6.0",
     "pytest-cov>=2.12",
-    "black>=21.0",
-    "isort>=5.9",
-    "flake8>=3.9",
+    "ruff>=0.14",
+    "pre-commit>=4.0",
     "mypy>=0.910",
     "beangulp",
-    "beancount"
+    "beancount",
 ]
 test = [
     "pytest>=6.0",
@@ -62,10 +61,15 @@ Documentation = "https://github.com/mekanics/beancount-tools-collection#readme"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.black]
+[tool.ruff]
 line-length = 88
-target-version = ['py39']
+target-version = "py39"
+src = ["src", "tests"]
 
-[tool.isort]
-profile = "black"
-line_length = 88 
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP"]
+ignore = ["E501"]  # line length is the formatter's job
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

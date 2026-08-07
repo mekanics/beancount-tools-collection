@@ -9,15 +9,16 @@ Run with:
     pytest tests/test_ibkr_live.py -v -s
 """
 
+from pathlib import Path
+
 import pytest
 import yaml
-from pathlib import Path
 from beancount.core import data as bdata
 
 from beancount_tools_collection.importers.ibkr import (
     IBKRConfigError,
-    IBKRImportError,
     IBKRImporter,
+    IBKRImportError,
 )
 
 # ---------------------------------------------------------------------------
@@ -52,6 +53,7 @@ requires_credentials = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="session")
 def ibkr_yaml(tmp_path_factory):
@@ -95,6 +97,7 @@ def live_entries(importer, ibkr_yaml):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @requires_credentials
 def test_identify(importer, ibkr_yaml):
@@ -176,14 +179,20 @@ def test_drip_transactions_tagged(live_entries):
     print(f"  Regular (untagged)      : {len(regular_buys)}")
 
     if not buy_txns:
-        pytest.skip("No buy transactions in this FlexQuery window — cannot verify DRIP tagging")
+        pytest.skip(
+            "No buy transactions in this FlexQuery window — cannot verify DRIP tagging"
+        )
 
     if not drip_txns:
-        pytest.skip("No DRIP transactions in this FlexQuery window — cannot verify #drip tag")
+        pytest.skip(
+            "No DRIP transactions in this FlexQuery window — cannot verify #drip tag"
+        )
 
     for txn in drip_txns:
         assert "drip" in txn.tags, f"DRIP txn missing #drip tag: {txn}"
-        assert txn.narration.startswith("BUY"), f"Unexpected narration for DRIP: {txn.narration}"
+        assert txn.narration.startswith("BUY"), (
+            f"Unexpected narration for DRIP: {txn.narration}"
+        )
 
     for txn in regular_buys:
         assert "drip" not in txn.tags, f"Regular buy incorrectly tagged #drip: {txn}"

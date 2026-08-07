@@ -2,6 +2,7 @@
 
 🧮 My personal collection of beancount tools including importers, price fetchers, plugins, and utilities for various financial institutions.
 
+[![CI](https://github.com/mekanics/beancount-tools-collection/actions/workflows/ci.yml/badge.svg)](https://github.com/mekanics/beancount-tools-collection/actions/workflows/ci.yml)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub issues](https://img.shields.io/github/issues/mekanics/beancount-tools-collection)](https://github.com/mekanics/beancount-tools-collection/issues)
@@ -51,8 +52,11 @@ pip install beancount-tools-collection
 ```bash
 git clone https://github.com/mekanics/beancount-tools-collection.git
 cd beancount-tools-collection
-pip install -e .
+uv sync --extra dev
+uv run pre-commit install
 ```
+
+This installs Ruff + pre-commit hooks so `ruff check --fix` and `ruff format` run on every `git commit` (same Ruff binary as CI, from `uv.lock`).
 
 ## Quick Start
 
@@ -60,8 +64,12 @@ pip install -e .
 
 ```python
 from beancount_tools_collection.importers import (
-    finpension, ibkr, revolut,
-    viac, viseca, yuh
+    finpension,
+    ibkr,
+    revolut,
+    viac,
+    viseca,
+    yuh,
 )
 
 # Example configuration
@@ -73,23 +81,19 @@ CONFIG = [
         isin_lookup={
             "CH0132501898": "CH0132501898",  # Example ISIN mapping
             # ... more ISINs
-        }
+        },
     ),
-
     viac.ViacImporter(
         root_account="Assets:Pension:S3a:Viac:Portfolio1",
         deposit_account="Assets:Checking",
         share_lookup={
             "UBS SMI": {"isin": "CH0033782431", "symbol": "CH0033782431"},
             # ... more share mappings
-        }
+        },
     ),
-
     yuh.YuhImporter(
-        account="Assets:Cash:Yuh:CHF",
-        goals_base_account="Assets:Savings:Yuh"
+        account="Assets:Cash:Yuh:CHF", goals_base_account="Assets:Savings:Yuh"
     ),
-
     # International institutions
     ibkr.IBKRImporter(
         Mainaccount="Assets:Invest:InteractiveBrokers",
@@ -97,14 +101,9 @@ CONFIG = [
         WHTAccount="Expenses:Taxes:WithholdingTax",
         PnLAccount="Income:Invest:Gains",
         FeesAccount="Expenses:Invest:Fees",
-        configFile="ibkr.yaml"  # Your IBKR FlexQuery config
+        configFile="ibkr.yaml",  # Your IBKR FlexQuery config
     ),
-
-    revolut.RevolutImporter(
-        "revolut_chf",
-        "Assets:Cash:Revolut:CHF",
-        "CHF"
-    ),
+    revolut.RevolutImporter("revolut_chf", "Assets:Cash:Revolut:CHF", "CHF"),
 ]
 ```
 

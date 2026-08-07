@@ -10,10 +10,13 @@ except ImportError:
     ibkr = None
 
 # List of available price sources
-__all__ = [name for name, module in locals().items() 
-           if module is not None and not name.startswith('_')]
+__all__ = [
+    name
+    for name, module in locals().items()
+    if module is not None and not name.startswith("_")
+]
 
 SUPPORTED_SOURCES = {
-    'brokers': ['ibkr'],
-    'web': [],
-} 
+    "brokers": ["ibkr"],
+    "web": [],
+}

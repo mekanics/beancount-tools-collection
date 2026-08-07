@@ -14,17 +14,16 @@ from ibflex.client import ERROR_CODES, BadResponseError, ResponseCodeError
 from ibflex.parser import FlexParserError
 
 from beancount_tools_collection.importers.ibkr import (
-    IBKRConfigError,
-    IBKRImportError,
-    IBKRImporter,
-    IBKRStatementError,
-    IBKRTemporaryError,
     _PERMANENT_CODES,
     _TEMPORARY_CODES,
+    IBKRConfigError,
+    IBKRImporter,
+    IBKRImportError,
+    IBKRStatementError,
+    IBKRTemporaryError,
     _classify_response_code_error,
     _redact,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -48,9 +47,7 @@ def importer():
 @pytest.fixture
 def ibkr_yaml(tmp_path):
     cfg = tmp_path / "ibkr.yaml"
-    cfg.write_text(
-        yaml.dump({"token": "SECRETTOKEN123", "queryId": 999999})
-    )
+    cfg.write_text(yaml.dump({"token": "SECRETTOKEN123", "queryId": 999999}))
     return str(cfg)
 
 
@@ -103,8 +100,7 @@ def test_permanent_message_shape_includes_remediation():
 
 def test_redact_replaces_token():
     assert (
-        _redact("url?t=SECRETTOKEN123&q=1", "SECRETTOKEN123")
-        == "url?t=<redacted>&q=1"
+        _redact("url?t=SECRETTOKEN123&q=1", "SECRETTOKEN123") == "url?t=<redacted>&q=1"
     )
     assert (
         _redact("also SECRETTOKEN123 in prose", "SECRETTOKEN123")
@@ -164,9 +160,7 @@ def _format_exception_chain(exc: BaseException) -> str:
     return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
 
-def test_token_never_leaks_in_exception_or_logs(
-    importer, ibkr_yaml, monkeypatch
-):
+def test_token_never_leaks_in_exception_or_logs(importer, ibkr_yaml, monkeypatch):
     token = "SECRETTOKEN123"
 
     def boom(tok, query_id):
@@ -279,12 +273,8 @@ def test_keyboard_interrupt_during_config_load_propagates(
 # ---------------------------------------------------------------------------
 
 
-def test_empty_statement_still_returns_empty_list(
-    importer, ibkr_yaml, monkeypatch
-):
-    empty = Types.FlexQueryResponse(
-        queryName="test", type="AF", FlexStatements=()
-    )
+def test_empty_statement_still_returns_empty_list(importer, ibkr_yaml, monkeypatch):
+    empty = Types.FlexQueryResponse(queryName="test", type="AF", FlexStatements=())
     monkeypatch.setattr(
         importer,
         "_download_statement",
@@ -293,18 +283,14 @@ def test_empty_statement_still_returns_empty_list(
     assert importer.extract(ibkr_yaml) == []
 
 
-def test_flex_parser_error_raises_statement_error(
-    importer, ibkr_yaml, monkeypatch
-):
+def test_flex_parser_error_raises_statement_error(importer, ibkr_yaml, monkeypatch):
     monkeypatch.setattr(
         "beancount_tools_collection.importers.ibkr.client.download",
         lambda token, query_id: b"<FlexQueryResponse/>",
     )
     monkeypatch.setattr(
         "beancount_tools_collection.importers.ibkr.parser.parse",
-        lambda response: (_ for _ in ()).throw(
-            FlexParserError("bad notes code")
-        ),
+        lambda response: (_ for _ in ()).throw(FlexParserError("bad notes code")),
     )
     with pytest.raises(IBKRStatementError) as excinfo:
         importer.extract(ibkr_yaml)
@@ -335,9 +321,7 @@ def test_bad_response_error_excludes_body(importer, ibkr_yaml, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_identify_and_account_perform_no_network_io(
-    importer, ibkr_yaml, monkeypatch
-):
+def test_identify_and_account_perform_no_network_io(importer, ibkr_yaml, monkeypatch):
     def fail_get(*args, **kwargs):
         raise AssertionError("requests.get must not be called")
 
@@ -379,6 +363,7 @@ def test_fava_style_extract_failure_is_not_empty_list(importer, ibkr_yaml, monke
     - exception -> red notify_err
     - empty list -> yellow "No entries to import from this file."
     """
+
     def boom(token, query_id):
         raise ResponseCodeError("1012", "Token has expired.")
 

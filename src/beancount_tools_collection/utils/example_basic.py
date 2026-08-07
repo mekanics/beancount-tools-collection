@@ -5,25 +5,26 @@ This example demonstrates how to use ImporterProtocolAdapter to wrap an existing
 and TransactionInspector to modify transactions during import.
 """
 
-from .adapter import ImporterProtocolAdapter
 from beancount.core import data
+
+from .adapter import ImporterProtocolAdapter
 from .transactionInspector import TransactionInspector
 
 
 class BasicTransactionProcessor(ImporterProtocolAdapter):
     """
     Example importer that processes transactions using TransactionInspector.
-    
+
     This class wraps any existing importer and applies basic transaction modifications:
     - Standardizes payee names
     - Adds appropriate expense categories
     - Flags certain transactions for review
     """
-    
+
     def __init__(self, base_importer):
         """
         Initialize with a base importer to wrap.
-        
+
         Args:
             base_importer: Any importer that implements the beangulp.importer.Importer interface
         """
@@ -32,10 +33,10 @@ class BasicTransactionProcessor(ImporterProtocolAdapter):
     def extract(self, f):
         """
         Extract transactions from file and apply modifications.
-        
+
         Args:
             f: File object to process
-            
+
         Returns:
             List of processed beancount entries
         """
@@ -58,10 +59,10 @@ class BasicTransactionProcessor(ImporterProtocolAdapter):
     def _process_transaction(self, transaction: data.Transaction) -> data.Transaction:
         """
         Process a single transaction using TransactionInspector.
-        
+
         Args:
             transaction: The transaction to process
-            
+
         Returns:
             Modified transaction, or None to filter it out
         """
@@ -70,14 +71,14 @@ class BasicTransactionProcessor(ImporterProtocolAdapter):
         # Example 1: Standardize food delivery service names
         if tx.hasPayee("Uber eats"):
             tx.replacePayee("Uber Eats").simplePosting("Expenses:Food:Delivery")
-        
+
         elif tx.hasPayee("JustEat"):
             tx.replacePayee("Just Eat").simplePosting("Expenses:Food:Delivery")
 
         # Example 2: Categorize Swiss shopping
         elif tx.hasPayee("Digitec Galaxus"):
             tx.simplePosting("Expenses:Shopping:Electronics")
-            
+
         elif tx.hasPayee("Migros") or tx.hasPayee("Coop"):
             tx.simplePosting("Expenses:Food:Groceries")
 
