@@ -5,4 +5,4 @@ This module will contain command-line scripts for automating common beancount ta
 """
 
 # Placeholder for future scripts
-__all__ = [] 
+__all__ = []

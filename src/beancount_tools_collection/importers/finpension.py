@@ -5,27 +5,14 @@ Setup:
 2) run 'bean-extract config.py path/to/finpension/transaction_report.csv -f mainLedgerFile.bean
 """
 
-import pandas as pd
-from datetime import datetime, timedelta
-import xml.etree.ElementTree as ET
-import warnings
-import pickle
 import re
-import numpy as np
-import sys
-from loguru import logger
+from datetime import datetime, timedelta
 
-import yaml
-from os import path
-from beangulp.importer import Importer
-
-from beanquery import query
-from beancount.parser import options
-from beancount.core import data, amount
-from beancount.core.number import D
+import pandas as pd
+from beancount.core import amount, data, position
 from beancount.core.number import Decimal
-from beancount.core import position
-from beancount.core.number import MISSING
+from beangulp.importer import Importer
+from loguru import logger
 
 # some constants set by Finpension in the csv export header
 FP_currency = "Asset Currency"
@@ -119,7 +106,7 @@ class FinpensionImporter(Importer):
             logger.error(
                 f"could not extract pillar and/or portfolio from filename {filepath} with regex pattern {self.regex}."
             )
-            raise AttributeError(e)
+            raise AttributeError(e) from e
         new_account = re.sub(r"S[2,3]a?", pillar, self.root_account)
         self.main_account = re.sub(r"Portfolio\d", portfolio, new_account)
 
@@ -141,7 +128,7 @@ class FinpensionImporter(Importer):
             "Balance": 2,
         }
         for col, digits in to_decimal_dict.items():
-            df[col] = df[col].apply(lambda x: Decimal(x).__round__(digits))
+            df[col] = df[col].apply(lambda x, d=digits: Decimal(x).__round__(d))
 
         df["Date"] = pd.to_datetime(df["Date"]).apply(datetime.date)
 
@@ -170,7 +157,7 @@ class FinpensionImporter(Importer):
 
     def Trades(self, trades):
         bean_transactions = []
-        for idx, row in trades.iterrows():
+        for _idx, row in trades.iterrows():
             currency = row[FP_currency]
             isin = row["ISIN"]
             symbol = self.isin_lookup.get(isin)
@@ -230,7 +217,7 @@ class FinpensionImporter(Importer):
 
     def Fees(self, fees):
         bean_transactions = []
-        for idx, row in fees.iterrows():
+        for _idx, row in fees.iterrows():
             currency = row[FP_currency]
             amount_ = amount.Amount(row[FP_proceeds], currency)
 
@@ -263,7 +250,7 @@ class FinpensionImporter(Importer):
         # make dividend & WHT transactions
 
         bean_transactions = []
-        for idx, row in dividends.iterrows():
+        for _idx, row in dividends.iterrows():
             currency = row[FP_currency]
             isin = row["ISIN"]
             symbol = self.isin_lookup.get(isin)
@@ -318,7 +305,7 @@ class FinpensionImporter(Importer):
     def Interest(self, int_):
         # calculates interest payments from IBKR data
         bean_transactions = []
-        for idx, row in int_.iterrows():
+        for _idx, row in int_.iterrows():
             currency = row[FP_currency]
             amount_ = amount.Amount(row[FP_proceeds], currency)
 
@@ -359,7 +346,7 @@ class FinpensionImporter(Importer):
 
         bean_transactions = []
         df = df[df["Date"] == df["Date"].max()]
-        for idx, row in df.iterrows():
+        for _idx, row in df.iterrows():
             currency = row[FP_currency]
             amount_ = amount.Amount(row["Balance"], currency)
             meta = data.new_metadata("balance", 0)
@@ -379,7 +366,7 @@ class FinpensionImporter(Importer):
         bean_transactions = []
         if len(self.deposit_account) == 0:  # control this from the config file
             return []
-        for idx, row in dep.iterrows():
+        for _idx, row in dep.iterrows():
             currency = row[FP_currency]
             amount_ = amount.Amount(row[FP_proceeds], currency)
 

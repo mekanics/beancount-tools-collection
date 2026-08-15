@@ -5,4 +5,4 @@ This module will contain custom beancount plugins for automation and enhanced fe
 """
 
 # Placeholder for future plugins
-__all__ = [] 
+__all__ = []

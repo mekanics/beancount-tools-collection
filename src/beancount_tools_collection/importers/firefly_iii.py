@@ -1,6 +1,5 @@
 import csv
 import logging
-from datetime import timedelta
 from io import StringIO
 
 from beancount.core import amount, data
@@ -13,7 +12,7 @@ class FireFlyImporter(Importer):
     """An importer for firefly-iii exports."""
 
     def identify(self, f):
-        if 'firefly' in f.name:
+        if "firefly" in f.name:
             return True
 
         return False
@@ -32,15 +31,14 @@ class FireFlyImporter(Importer):
                 try:
                     amount_raw = D(row["amount"].strip())
                     amt = amount.Amount(amount_raw, row["currency_code"])
-                    
+
                     book_date = parse(row["date"].strip()).date()
                     tx_id = D(row["group_id"])
                 except Exception as e:
                     logging.warning(e)
                     continue
 
-
-                if tx_id in entries: 
+                if tx_id in entries:
                     # entries[tx_id].postings.append(
                     #     data.Posting(
                     #         tx_transfer,

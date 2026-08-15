@@ -1,10 +1,6 @@
-from .adapter import ImporterProtocolAdapter
-from beancount.core.number import D
-from beancount.core import account
-from beancount.core import amount
-from beancount.core import flags
-from beancount.core import data
-from beancount.core.position import Cost, CostSpec
+from typing import Optional
+
+from beancount.core import amount, data, flags
 
 
 class TransactionInspector:
@@ -29,34 +25,28 @@ class TransactionInspector:
     def replacePayee(self, payee: str, keepAsNarration: bool = False):
         self.transaction = self.transaction._replace(
             payee=payee,
-            narration=self.transaction.payee if keepAsNarration else self.transaction.narration
+            narration=self.transaction.payee
+            if keepAsNarration
+            else self.transaction.narration,
         )
         return self
 
     def narration(self, narration: str):
-        self.transaction = self.transaction._replace(
-            narration=narration
-        )
+        self.transaction = self.transaction._replace(narration=narration)
         return self
 
     def flagOkay(self):
-        self.transaction = self.transaction._replace(
-            flag=flags.FLAG_OKAY
-        )
+        self.transaction = self.transaction._replace(flag=flags.FLAG_OKAY)
         return self
 
     def flagWarning(self):
-        self.transaction = self.transaction._replace(
-            flag=flags.FLAG_WARNING
-        )
+        self.transaction = self.transaction._replace(flag=flags.FLAG_WARNING)
         return self
 
-    def simplePosting(self, account, units: amount.Amount | None = None):
-        self.transaction.postings.append(data.Posting(
-            account,
-            units, 
-            None, None, None, None
-        ))
+    def simplePosting(self, account, units: Optional[amount.Amount] = None):
+        self.transaction.postings.append(
+            data.Posting(account, units, None, None, None, None)
+        )
         return self
 
     def addTag(self, tag: str):
@@ -67,7 +57,8 @@ class TransactionInspector:
 
     def addTags(self, tags: list[str]):
         self.transaction = self.transaction._replace(
-            tags=self.transaction.tags.union(tags))
+            tags=self.transaction.tags.union(tags)
+        )
 
     def addLink(self, link: str):
         self.transaction = self.transaction._replace(
@@ -77,4 +68,5 @@ class TransactionInspector:
 
     def addLinks(self, links: list[str]):
         self.transaction = self.transaction._replace(
-            links=self.transaction.links.union(links))
+            links=self.transaction.links.union(links)
+        )
