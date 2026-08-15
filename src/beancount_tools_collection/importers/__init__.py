@@ -33,6 +33,11 @@ except ImportError:
     viseca = None
 
 try:
+    from . import viseca_csv
+except ImportError:
+    viseca_csv = None
+
+try:
     from . import yuh
 except ImportError:
     yuh = None
@@ -52,7 +57,7 @@ __all__ = [
 
 # Metadata
 SUPPORTED_INSTITUTIONS = {
-    "swiss": ["finpension", "viac", "viseca", "yuh"],
+    "swiss": ["finpension", "viac", "viseca", "viseca_csv", "yuh"],
     "international": ["ibkr", "revolut"],
     "other": ["firefly_iii"],
 }
