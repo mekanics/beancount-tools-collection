@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "beancount-tools-collection"
-version = "1.1.0"
+version = "1.2.0"
 description = "A comprehensive collection of beancount tools: importers, price fetchers, plugins, and utilities"
 readme = "README.md"
 license = {text = "MIT"}
