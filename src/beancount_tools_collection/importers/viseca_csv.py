@@ -515,13 +515,16 @@ class VisecaCsvImporter(
         if original_amount is not None and (
             original_currency != currency or original_amount != raw_amount
         ):
-            meta[META_ORIGINAL_AMOUNT] = original_amount
+            # Strings, not Decimal: Fava JSON-encodes Decimal as a number,
+            # loads it back as float, and beancount's printer then raises
+            # ValueError: Unexpected value: '355.13'.
+            meta[META_ORIGINAL_AMOUNT] = str(original_amount)
             if original_currency:
                 meta[META_ORIGINAL_CURRENCY] = original_currency
 
         rate = row.exchange_rate
         if rate is not None and rate != ONE:
-            meta[META_EXCHANGE_RATE] = rate
+            meta[META_EXCHANGE_RATE] = str(rate)
 
         return meta
 

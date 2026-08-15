@@ -10,11 +10,14 @@ entries to import from this file" notice. That is a manual QA step, exercised by
 the VisecaCsvError type which Fava turns into an ImporterExtractError.
 """
 
+import json
 import os
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from beancount.parser import printer
 from loguru import logger
 
 from beancount_tools_collection.importers.viseca_csv import (
@@ -349,9 +352,9 @@ def test_foreign_currency_posts_the_settled_amount(importer, tmp_path):
     assert entry.postings[0].units == entry.postings[0].units._replace(
         number=Decimal("-10.75"), currency="CHF"
     )
-    assert entry.meta["originalAmount"] == Decimal("11.000")
+    assert entry.meta["originalAmount"] == "11.000"
     assert entry.meta["originalCurrency"] == "EUR"
-    assert entry.meta["exchangeRate"] == Decimal("0.977273")
+    assert entry.meta["exchangeRate"] == "0.977273"
     assert entry.flag == "!"
 
 
@@ -363,8 +366,40 @@ def test_same_currency_amount_mismatch_is_recorded_but_not_flagged(importer, tmp
     )
     entry = importer.extract(path)[0]
     assert entry.postings[0].units.number == Decimal("-355.15")
-    assert entry.meta["originalAmount"] == Decimal("355.130")
+    assert entry.meta["originalAmount"] == "355.130"
     assert entry.flag == "*"
+
+
+def test_numeric_metadata_survives_fava_json_roundtrip(importer, tmp_path):
+    """Fava save path: Decimal metadata becomes a JSON number, then a float.
+
+    beancount's printer accepts Decimal but rejects float, so add_entries
+    raises ValueError: Unexpected value: '355.13' unless we store numbers
+    as strings. This is the Bergzeit row from a real bill.
+    """
+    path = make_csv(
+        tmp_path,
+        {
+            "TransactionId": "TRX2026080500000106849",
+            "Amount": "355.150",
+            "OriginalAmount": "355.130",
+            "OriginalCurrency": "CHF",
+            "MerchantName": "Bergzeit",
+            "Details": "UZR*BERGZEIT.CH",
+        },
+    )
+    entry = importer.extract(path)[0]
+
+    def default(value):
+        if isinstance(value, date):
+            return str(value)
+        if isinstance(value, Decimal):
+            return float(value)
+        raise TypeError(type(value))
+
+    restored = json.loads(json.dumps(dict(entry.meta), default=default))
+    printed = printer.format_entry(entry._replace(meta=restored))
+    assert 'originalAmount: "355.130"' in printed
 
 
 def test_matching_original_amount_is_not_recorded(importer, tmp_path):
