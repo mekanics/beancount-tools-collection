@@ -14,7 +14,7 @@
 **Swiss Institutions:**
 
 - **Yuh** - CSV exports
-- **Viseca** - JSON transaction exports (including Migros Cumulus Credit Card)
+- **Viseca** - CSV bill exports (primary) and JSON transaction exports (archival), including Migros Cumulus Credit Card
 - **VIAC** - JSON transaction exports (pillar 2 & 3a)
 - **Finpension** - CSV transaction reports (pillar 3a)
 
@@ -68,7 +68,7 @@ from beancount_tools_collection.importers import (
     ibkr,
     revolut,
     viac,
-    viseca,
+    viseca_csv,
     yuh,
 )
 
@@ -94,6 +94,19 @@ CONFIG = [
     yuh.YuhImporter(
         account="Assets:Cash:Yuh:CHF", goals_base_account="Assets:Savings:Yuh"
     ),
+    viseca_csv.VisecaCsvImporter(
+        account="Liabilities:CreditCard:Viseca",
+        # The monthly "Ihre Zahlung - Danke" row settles the previous bill.
+        # Point it at the account you pay from and the liability returns to
+        # zero each cycle, so a dropped transaction shows up as a balance error.
+        settlement_account="Assets:Cash:Yuh:CHF",
+        # Optional. Unmapped merchants stay single-legged on purpose.
+        merchant_map={
+            "Coop": "Expenses:Groceries",
+            "Migros": "Expenses:Groceries",
+            "SBB CFF FFS": "Expenses:Transport",
+        },
+    ),
     # International institutions
     ibkr.IBKRImporter(
         Mainaccount="Assets:Invest:InteractiveBrokers",
@@ -106,6 +119,23 @@ CONFIG = [
     revolut.RevolutImporter("revolut_chf", "Assets:Cash:Revolut:CHF", "CHF"),
 ]
 ```
+
+### Automatic Categorization
+
+The Viseca CSV export carries no category, so `VisecaCsvImporter` emits
+single-legged postings and leaves the expense account to you. Anything not in
+`merchant_map` is left incomplete on purpose, which is exactly what
+[smart_importer](https://github.com/beancount/smart_importer) needs — it fills
+in postings left open and will not touch one that already names an account:
+
+```python
+from smart_importer import PredictPayees, PredictPostings
+
+HOOKS = [PredictPostings().hook, PredictPayees().hook]
+```
+
+Fava passes your existing entries automatically; on the CLI use
+`extract -e existing.beancount` so there is something to learn from.
 
 ### Price Fetcher Configuration
 
@@ -125,6 +155,7 @@ Each importer has specific requirements and configuration options:
 - **[Finpension](docs/importers/finpension.md)** - CSV transaction reports
 - **[Interactive Brokers](docs/importers/ibkr.md)** - FlexQuery configuration
 - **[VIAC](docs/importers/viac.md)** - JSON export setup
+- **[Viseca](#viseca-csv-bill-exports)** - CSV bill exports (primary) and JSON (archival)
 - **[Yuh](docs/importers/yuh.md)** - CSV export configuration
 
 ### Account Structure Examples
@@ -178,6 +209,33 @@ Expenses:
 
 ## Notes
 
+### Viseca CSV bill exports
+
+`VisecaCsvImporter` reads the CSV bill the Viseca One app exports. It recognises
+the file by its column header, so the download works unrenamed; pass
+`filename_regex` as well if you import several Viseca accounts separately.
+
+A few behaviours worth knowing:
+
+- **Payments become transfers.** The monthly "Ihre Zahlung - Danke" row settles
+  the _previous_ bill. With `settlement_account` set it posts as a balanced
+  transfer, so the liability returns to zero each cycle. The JSON importer drops
+  these rows, which lets the liability grow without bound.
+- **Refunds and foreign-currency rows are flagged `!`** for review, since their
+  semantics have not yet been confirmed against real data. Set
+  `flag_unverified=False` to turn that off.
+- **Amounts are posted verbatim** from `Amount`/`Currency`, which is always the
+  settled amount in the card's currency. `OriginalAmount` is recorded as
+  metadata but never used for arithmetic: it can differ from `Amount` even at
+  exchange rate 1.0 in the same currency.
+- **Bad rows are skipped, not fatal**, and the count is reported in the log so
+  the loss is never silent. Failures affecting the whole file (unreadable file,
+  unexpected header, several cards with no `card_accounts` mapping) raise
+  instead, so Fava shows a real error rather than "No entries to import".
+- **Entries carry `transactionId`**, the same metadata key the JSON importer
+  writes, so re-imports and overlapping bills deduplicate exactly rather than
+  heuristically.
+
 ### Interactive Brokers errors (v1.1.0+)
 
 IBKR Flex fetch and credential failures (expired/invalid token, bad `ibkr.yaml`, network errors, unparseable statements) now raise typed errors instead of returning an empty entry list. In Fava this surfaces as an import/API error (rather than the yellow "No entries to import from this file." warning that used to appear on hard failures). The CLI exits non-zero with a short remediation message.
@@ -196,24 +254,24 @@ We welcome contributions! Here's how you can help:
 
 ### Development Setup
 
-```bash
-git clone https://github.com/mekanics/beancount-tools-collection.git
-cd beancount-tools-collection
-pip install -e ".[dev]"
-```
+Same as [From Source](#from-source): `uv sync --extra dev` and
+`uv run pre-commit install`. That installs Ruff and the pre-commit hooks that
+run `ruff check --fix` and `ruff format` on every commit.
 
 ### Running Tests
 
 ```bash
-pytest
+uv run pytest
 ```
 
 ### Code Formatting
 
 ```bash
-black src/
-isort src/
+uv run ruff check --fix
+uv run ruff format
 ```
+
+Ruff replaced Black, isort, and flake8. The same commands run in CI.
 
 ## License
 
