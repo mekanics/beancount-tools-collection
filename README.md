@@ -76,47 +76,45 @@ from beancount_tools_collection.importers import (
 CONFIG = [
     # Swiss institutions
     finpension.FinpensionImporter(
-        root_account="Assets:Pension:S3:Finpension:Portfolio1",
-        deposit_account="Assets:Checking",
+        root_account='Assets:Pension:S3:Finpension:Portfolio1',
+        deposit_account='Assets:Checking',
         isin_lookup={
-            "CH0132501898": "CH0132501898",  # Example ISIN mapping
+            'CH0132501898': 'CH0132501898',  # Example ISIN mapping
             # ... more ISINs
         },
     ),
     viac.ViacImporter(
-        root_account="Assets:Pension:S3a:Viac:Portfolio1",
-        deposit_account="Assets:Checking",
+        root_account='Assets:Pension:S3a:Viac:Portfolio1',
+        deposit_account='Assets:Checking',
         share_lookup={
-            "UBS SMI": {"isin": "CH0033782431", "symbol": "CH0033782431"},
+            'UBS SMI': {'isin': 'CH0033782431', 'symbol': 'CH0033782431'},
             # ... more share mappings
         },
     ),
-    yuh.YuhImporter(
-        account="Assets:Cash:Yuh:CHF", goals_base_account="Assets:Savings:Yuh"
-    ),
+    yuh.YuhImporter(account='Assets:Cash:Yuh:CHF', goals_base_account='Assets:Savings:Yuh'),
     viseca_csv.VisecaCsvImporter(
-        account="Liabilities:CreditCard:Viseca",
+        account='Liabilities:CreditCard:Viseca',
         # The monthly "Ihre Zahlung - Danke" row settles the previous bill.
         # Point it at the account you pay from and the liability returns to
         # zero each cycle, so a dropped transaction shows up as a balance error.
-        settlement_account="Assets:Cash:Yuh:CHF",
+        settlement_account='Assets:Cash:Yuh:CHF',
         # Optional. Unmapped merchants stay single-legged on purpose.
         merchant_map={
-            "Coop": "Expenses:Groceries",
-            "Migros": "Expenses:Groceries",
-            "SBB CFF FFS": "Expenses:Transport",
+            'Coop': 'Expenses:Groceries',
+            'Migros': 'Expenses:Groceries',
+            'SBB CFF FFS': 'Expenses:Transport',
         },
     ),
     # International institutions
     ibkr.IBKRImporter(
-        Mainaccount="Assets:Invest:InteractiveBrokers",
-        DivAccount="Income:Dividends:InteractiveBrokers",
-        WHTAccount="Expenses:Taxes:WithholdingTax",
-        PnLAccount="Income:Invest:Gains",
-        FeesAccount="Expenses:Invest:Fees",
-        configFile="ibkr.yaml",  # Your IBKR FlexQuery config
+        Mainaccount='Assets:Invest:InteractiveBrokers',
+        DivAccount='Income:Dividends:InteractiveBrokers',
+        WHTAccount='Expenses:Taxes:WithholdingTax',
+        PnLAccount='Income:Invest:Gains',
+        FeesAccount='Expenses:Invest:Fees',
+        configFile='ibkr.yaml',  # Your IBKR FlexQuery config
     ),
-    revolut.RevolutImporter("revolut_chf", "Assets:Cash:Revolut:CHF", "CHF"),
+    revolut.RevolutImporter('revolut_chf', 'Assets:Cash:Revolut:CHF', 'CHF'),
 ]
 ```
 

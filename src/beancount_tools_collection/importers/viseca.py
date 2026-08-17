@@ -16,46 +16,44 @@ class VisecaImporter(Importer):
 
     def __init__(
         self,
-        account="Liabilities:CreditCard:Viseca",
-        regex=r"viseca.*\.json",
+        account='Liabilities:CreditCard:Viseca',
+        regex=r'viseca.*\.json',
         category_map=None,
         split_expense_account=None,
         split_ratio=0.5,
     ):
         self.main_account = account
         self.regex = regex
-        self.flag = "*"
+        self.flag = '*'
         self.split_expense_account = split_expense_account
         self.split_ratio = Decimal(str(split_ratio))
         # Default category mapping if none provided
         self.category_map = category_map or {
-            "food_and_drink": "Expenses:Food",
-            "groceries": "Expenses:Groceries",
-            "shopping": "Expenses:Shopping",
-            "travel": "Expenses:Travel",
-            "personal_care": "Expenses:PersonalCare",
-            "leisure": "Expenses:Leisure",
-            "transport": "Expenses:Transport",
+            'food_and_drink': 'Expenses:Food',
+            'groceries': 'Expenses:Groceries',
+            'shopping': 'Expenses:Shopping',
+            'travel': 'Expenses:Travel',
+            'personal_care': 'Expenses:PersonalCare',
+            'leisure': 'Expenses:Leisure',
+            'transport': 'Expenses:Transport',
             # Add more mappings as needed
         }
 
     def identify(self, filepath):
         result = bool(re.search(self.regex, filepath, re.IGNORECASE))
-        logger.info(
-            f"identify assertion for viseca importer and file '{filepath}': {result}"
-        )
+        logger.info(f"identify assertion for viseca importer and file '{filepath}': {result}")
         return result
 
     def account(self, filepath):
         return self.main_account
 
     def extract(self, filepath, existing=None):
-        logger.info(f"Starting extraction from file: {filepath}")
+        logger.info(f'Starting extraction from file: {filepath}')
         entries = []
-        with open(filepath, encoding="utf-8-sig") as f:
+        with open(filepath, encoding='utf-8-sig') as f:
             data_json = json.load(f)
 
-        txs = data_json["list"]
+        txs = data_json['list']
         df = pd.json_normalize(txs)
 
         # pandas.json_normalize fills missing keys with NaN. NaN is a float
@@ -75,40 +73,40 @@ class VisecaImporter(Importer):
             return v
 
         for idx, row in df.iterrows():
-            logger.debug(f"Processing transaction {idx}: {row.get('transactionId')}")
+            logger.debug(f'Processing transaction {idx}: {row.get("transactionId")}')
             try:
                 # Skip non-booked transactions
-                state_type = safe_value(row.get("stateType"))
-                if state_type != "booked":
+                state_type = safe_value(row.get('stateType'))
+                if state_type != 'booked':
                     logger.debug(
-                        f"Skipping non-booked transaction {row.get('transactionId')} "
-                        f"(stateType={state_type})"
+                        f'Skipping non-booked transaction {row.get("transactionId")} '
+                        f'(stateType={state_type})'
                     )
                     continue
 
                 # Category mapping
-                pfm_cat = safe_value(row.get("pfmCategory.id")) or "other"
-                if pfm_cat == "deposits":
+                pfm_cat = safe_value(row.get('pfmCategory.id')) or 'other'
+                if pfm_cat == 'deposits':
                     continue  # Ignore payment transactions
 
                 # Parse date
-                date = pd.to_datetime(row["date"]).date()
+                date = pd.to_datetime(row['date']).date()
                 payee = (
-                    safe_value(row.get("prettyName"))
-                    or safe_value(row.get("merchantName"))
-                    or "Unknown"
+                    safe_value(row.get('prettyName'))
+                    or safe_value(row.get('merchantName'))
+                    or 'Unknown'
                 )
-                details = safe_value(row.get("details")) or ""
-                currency = safe_value(row.get("currency")) or "CHF"
-                amt = Decimal(str(row["amount"]))
+                details = safe_value(row.get('details')) or ''
+                currency = safe_value(row.get('currency')) or 'CHF'
+                amt = Decimal(str(row['amount']))
                 # Viseca: negative = refund, positive = expense
                 amt = -amt if amt < 0 else amt
 
-                expense_account = self.category_map.get(pfm_cat, "Expenses:Unknown")
+                expense_account = self.category_map.get(pfm_cat, 'Expenses:Unknown')
 
                 # Foreign currency handling
-                orig_amt = safe_value(row.get("originalAmount"))
-                orig_cur = safe_value(row.get("originalCurrency"))
+                orig_amt = safe_value(row.get('originalAmount'))
+                orig_cur = safe_value(row.get('originalCurrency'))
                 postings = []
 
                 # Main posting: always the credit card liability
@@ -125,16 +123,12 @@ class VisecaImporter(Importer):
                 # Expense posting(s)
                 if self.split_expense_account:
                     # Split the amount according to split_ratio and round to 3 decimal places
-                    amt_main = (amt * self.split_ratio).quantize(Decimal("0.001"))
+                    amt_main = (amt * self.split_ratio).quantize(Decimal('0.001'))
                     amt_split = amt - amt_main  # Ensure total matches original
 
                     # Format amounts to 2 decimals if they end with 0, otherwise keep 3 decimals
                     def format_amount(amt):
-                        return (
-                            amt.quantize(Decimal("0.01"))
-                            if amt % Decimal("0.01") == 0
-                            else amt
-                        )
+                        return amt.quantize(Decimal('0.01')) if amt % Decimal('0.01') == 0 else amt
 
                     postings.append(
                         data.Posting(
@@ -179,18 +173,16 @@ class VisecaImporter(Importer):
                 #     )
 
                 meta_dict = {
-                    "transactionId": safe_value(row.get("transactionId")),
-                    "category": safe_value(pfm_cat),
-                    "merchant": safe_value(payee),
-                    "details": safe_value(details),
-                    "originalAmount": str(orig_amt) if orig_amt is not None else None,
-                    "originalCurrency": orig_cur,
+                    'transactionId': safe_value(row.get('transactionId')),
+                    'category': safe_value(pfm_cat),
+                    'merchant': safe_value(payee),
+                    'details': safe_value(details),
+                    'originalAmount': str(orig_amt) if orig_amt is not None else None,
+                    'originalCurrency': orig_cur,
                 }
-                if orig_cur is not None and orig_cur != "CHF":
-                    meta_dict["conversionRate"] = safe_value(row.get("conversionRate"))
-                    meta_dict["conversionRateDate"] = safe_value(
-                        row.get("conversionRateDate")
-                    )
+                if orig_cur is not None and orig_cur != 'CHF':
+                    meta_dict['conversionRate'] = safe_value(row.get('conversionRate'))
+                    meta_dict['conversionRateDate'] = safe_value(row.get('conversionRateDate'))
 
                 # Drop None entries and stringify any residual floats so nothing
                 # NaN-shaped slips into Fava's JSON encoder.
@@ -213,7 +205,7 @@ class VisecaImporter(Importer):
                 )
                 entries.append(txn)
             except Exception as e:
-                logger.warning(f"Error processing transaction at index {idx}: {e}")
+                logger.warning(f'Error processing transaction at index {idx}: {e}')
                 continue
-        logger.info(f"Extracted {len(entries)} entries from {filepath}")
+        logger.info(f'Extracted {len(entries)} entries from {filepath}')
         return entries

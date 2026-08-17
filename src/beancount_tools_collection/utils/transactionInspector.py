@@ -11,7 +11,7 @@ class TransactionInspector:
         return payee.lower() in self.transaction.payee.lower()
 
     def isDebit(self) -> bool:
-        return self.transaction.postings[0].units.number < amount.Decimal("0")
+        return self.transaction.postings[0].units.number < amount.Decimal('0')
 
     def isCredit(self) -> bool:
         return not self.isDebit()
@@ -25,9 +25,7 @@ class TransactionInspector:
     def replacePayee(self, payee: str, keepAsNarration: bool = False):
         self.transaction = self.transaction._replace(
             payee=payee,
-            narration=self.transaction.payee
-            if keepAsNarration
-            else self.transaction.narration,
+            narration=self.transaction.payee if keepAsNarration else self.transaction.narration,
         )
         return self
 
@@ -44,29 +42,19 @@ class TransactionInspector:
         return self
 
     def simplePosting(self, account, units: Optional[amount.Amount] = None):
-        self.transaction.postings.append(
-            data.Posting(account, units, None, None, None, None)
-        )
+        self.transaction.postings.append(data.Posting(account, units, None, None, None, None))
         return self
 
     def addTag(self, tag: str):
-        self.transaction = self.transaction._replace(
-            tags=self.transaction.tags.union([tag])
-        )
+        self.transaction = self.transaction._replace(tags=self.transaction.tags.union([tag]))
         return self
 
     def addTags(self, tags: list[str]):
-        self.transaction = self.transaction._replace(
-            tags=self.transaction.tags.union(tags)
-        )
+        self.transaction = self.transaction._replace(tags=self.transaction.tags.union(tags))
 
     def addLink(self, link: str):
-        self.transaction = self.transaction._replace(
-            links=self.transaction.links.union([link])
-        )
+        self.transaction = self.transaction._replace(links=self.transaction.links.union([link]))
         return self
 
     def addLinks(self, links: list[str]):
-        self.transaction = self.transaction._replace(
-            links=self.transaction.links.union(links)
-        )
+        self.transaction = self.transaction._replace(links=self.transaction.links.union(links))

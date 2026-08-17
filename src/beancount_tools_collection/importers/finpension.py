@@ -15,9 +15,9 @@ from beangulp.importer import Importer
 from loguru import logger
 
 # some constants set by Finpension in the csv export header
-FP_currency = "Asset Currency"
-FP_proceeds = "Cash Flow"
-FP_asseet_price = "Asset Price in CHF"
+FP_currency = 'Asset Currency'
+FP_proceeds = 'Cash Flow'
+FP_asseet_price = 'Asset Price in CHF'
 
 
 class FinpensionImporter(Importer):
@@ -30,18 +30,16 @@ class FinpensionImporter(Importer):
         deposit_account=None,
         root_account=None,
         isin_lookup=None,  # for example Assets:Invest:IB
-        div_suffix="Div",  # suffix for dividend Account , like Assets:Invest:IB:VT:Div
-        interest_suffix="Interest",
-        fees_suffix="Fees",
-        pnl_suffix="PnL",
-        file_encoding="utf-8-sig",
-        sep=";",
+        div_suffix='Div',  # suffix for dividend Account , like Assets:Invest:IB:VT:Div
+        interest_suffix='Interest',
+        fees_suffix='Fees',
+        pnl_suffix='PnL',
+        file_encoding='utf-8-sig',
+        sep=';',
         # a regex pattern that allows to distinguish between pillar 2&3 and individual portfolios
-        regex=r"finpension_(S[2,3][a]?)_(Portfolio\d)",
+        regex=r'finpension_(S[2,3][a]?)_(Portfolio\d)',
     ):
-        self.root_account = (
-            root_account  # root account from  which others can be derived
-        )
+        self.root_account = root_account  # root account from  which others can be derived
         self.deposit_account = deposit_account
         self.div_suffix = div_suffix
         self.interest_suffix = interest_suffix
@@ -49,7 +47,7 @@ class FinpensionImporter(Importer):
         self.pnl_suffix = pnl_suffix
         self.isin_lookup = isin_lookup
         self.file_encoding = file_encoding
-        self.flag = "*"
+        self.flag = '*'
         self.regex = regex
         self.sep = sep
 
@@ -61,35 +59,31 @@ class FinpensionImporter(Importer):
     def identify(self, filepath):
         # intended file format is *finpension_s2_p1* for säule(pillar) 2 portfolio 1
         result = bool(re.search(self.regex, filepath, re.IGNORECASE))
-        logger.info(
-            f"identify assertion for finpension importer and file '{filepath}': {result}"
-        )
+        logger.info(f"identify assertion for finpension importer and file '{filepath}': {result}")
         return result
 
     def getLiquidityAccount(self, currency):
-        return ":".join([self.main_account, currency])
+        return ':'.join([self.main_account, currency])
 
     def getDivIncomeAcconut(self, currency, symbol):
-        return ":".join(
-            [self.main_account.replace("Assets", "Income"), symbol, self.div_suffix]
-        )
+        return ':'.join([self.main_account.replace('Assets', 'Income'), symbol, self.div_suffix])
 
     def getInterestIncomeAcconut(self, currency):
-        return ":".join(
+        return ':'.join(
             [
-                self.main_account.replace("Assets", "Income"),
+                self.main_account.replace('Assets', 'Income'),
                 self.interest_suffix,
                 currency,
             ]
         )
 
     def getAssetAccount(self, symbol):
-        return ":".join([self.main_account, symbol])
+        return ':'.join([self.main_account, symbol])
 
     def getFeesAccount(self, currency):
-        return ":".join(
+        return ':'.join(
             [
-                self.main_account.replace("Assets", "Expenses"),
+                self.main_account.replace('Assets', 'Expenses'),
                 self.fees_suffix,
                 currency,
             ]
@@ -104,11 +98,11 @@ class FinpensionImporter(Importer):
             pillar, portfolio = re.search(self.regex, filepath, re.IGNORECASE).groups()
         except AttributeError as e:
             logger.error(
-                f"could not extract pillar and/or portfolio from filename {filepath} with regex pattern {self.regex}."
+                f'could not extract pillar and/or portfolio from filename {filepath} with regex pattern {self.regex}.'
             )
             raise AttributeError(e) from e
-        new_account = re.sub(r"S[2,3]a?", pillar, self.root_account)
-        self.main_account = re.sub(r"Portfolio\d", portfolio, new_account)
+        new_account = re.sub(r'S[2,3]a?', pillar, self.root_account)
+        self.main_account = re.sub(r'Portfolio\d', portfolio, new_account)
 
     def extract(self, filepath, existing=None):
         # the actual processing of the csv export
@@ -122,27 +116,23 @@ class FinpensionImporter(Importer):
         )
         # convert specific columns to Decimal with specific precisions
         to_decimal_dict = {
-            "Number of Shares": 3,
-            "Asset Price in CHF": 2,
-            "Cash Flow": 2,
-            "Balance": 2,
+            'Number of Shares': 3,
+            'Asset Price in CHF': 2,
+            'Cash Flow': 2,
+            'Balance': 2,
         }
         for col, digits in to_decimal_dict.items():
             df[col] = df[col].apply(lambda x, d=digits: Decimal(x).__round__(d))
 
-        df["Date"] = pd.to_datetime(df["Date"]).apply(datetime.date)
+        df['Date'] = pd.to_datetime(df['Date']).apply(datetime.date)
 
         # disect the complete report in similar transactions
         # abit messy since Finpension uses different tags in pillar 2/3a
-        trades = df[df.Category.isin(["Portfolio Transaction", "Buy", "Sell"])]
-        deposits = df[df.Category.isin(["Transfer vested benefits", "Deposit"])]
-        fees = df[
-            df.Category.isin(["Implementation fees", "Flat-rate administrative fee"])
-        ]
-        interests = df[df.Category == "Interests"]
-        dividends = df[
-            df.Category.isin(["Dividend and Interest Distributions", "Dividend"])
-        ]
+        trades = df[df.Category.isin(['Portfolio Transaction', 'Buy', 'Sell'])]
+        deposits = df[df.Category.isin(['Transfer vested benefits', 'Deposit'])]
+        fees = df[df.Category.isin(['Implementation fees', 'Flat-rate administrative fee'])]
+        interests = df[df.Category == 'Interests']
+        dividends = df[df.Category.isin(['Dividend and Interest Distributions', 'Dividend'])]
 
         return_txn = (
             self.Trades(trades)
@@ -159,52 +149,48 @@ class FinpensionImporter(Importer):
         bean_transactions = []
         for _idx, row in trades.iterrows():
             currency = row[FP_currency]
-            isin = row["ISIN"]
+            isin = row['ISIN']
             symbol = self.isin_lookup.get(isin)
-            asset = row["Asset Name"]
+            asset = row['Asset Name']
             logger.info(isin, symbol)
             if symbol is None:
                 logger.error(
-                    f"Could not fetch isin {row['ISIN']} from supplied ISINs {list(self.isin_lookup.keys())}"
+                    f'Could not fetch isin {row["ISIN"]} from supplied ISINs {list(self.isin_lookup.keys())}'
                 )
                 continue
             proceeds = amount.Amount(row[FP_proceeds], currency)
 
-            quantity = amount.Amount(row["Number of Shares"], symbol)
-            price = amount.Amount(row[FP_asseet_price], "CHF")
+            quantity = amount.Amount(row['Number of Shares'], symbol)
+            price = amount.Amount(row[FP_asseet_price], 'CHF')
             cost = position.CostSpec(
                 number_per=row[FP_asseet_price],
                 number_total=None,
-                currency="CHF",
+                currency='CHF',
                 date=None,
                 label=None,
                 merge=False,
             )
 
             postings = [
-                data.Posting(
-                    self.getAssetAccount(symbol), quantity, cost, None, None, None
-                ),
-                data.Posting(
-                    self.getLiquidityAccount(currency), proceeds, None, None, None, None
-                ),
+                data.Posting(self.getAssetAccount(symbol), quantity, cost, None, None, None),
+                data.Posting(self.getLiquidityAccount(currency), proceeds, None, None, None, None),
             ]
             if quantity.number > 0:
-                buy_sell = "BUY"
+                buy_sell = 'BUY'
             else:
-                buy_sell = "SELL"
+                buy_sell = 'SELL'
             bean_transactions.append(
                 data.Transaction(
-                    data.new_metadata("Buy", 0),
-                    row["Date"],
+                    data.new_metadata('Buy', 0),
+                    row['Date'],
                     self.flag,
                     isin,  # payee
-                    " ".join(
+                    ' '.join(
                         [
                             buy_sell,
                             quantity.to_string(),
-                            "@",
-                            price.to_string() + ";",
+                            '@',
+                            price.to_string() + ';',
                             asset,
                         ]
                     ),
@@ -223,21 +209,17 @@ class FinpensionImporter(Importer):
 
             # make the postings, two for fees
             postings = [
-                data.Posting(
-                    self.getFeesAccount(currency), -amount_, None, None, None, None
-                ),
-                data.Posting(
-                    self.getLiquidityAccount(currency), amount_, None, None, None, None
-                ),
+                data.Posting(self.getFeesAccount(currency), -amount_, None, None, None, None),
+                data.Posting(self.getLiquidityAccount(currency), amount_, None, None, None, None),
             ]
             meta = data.new_metadata(__file__, 0, {})  # actually no metadata
             bean_transactions.append(
                 data.Transaction(
                     meta,
-                    row["Date"],
+                    row['Date'],
                     self.flag,
-                    "finpension 3a Vorsorgestiftung",  # payee
-                    "Fees",
+                    'finpension 3a Vorsorgestiftung',  # payee
+                    'Fees',
                     data.EMPTY_SET,
                     data.EMPTY_SET,
                     postings,
@@ -252,11 +234,11 @@ class FinpensionImporter(Importer):
         bean_transactions = []
         for _idx, row in dividends.iterrows():
             currency = row[FP_currency]
-            isin = row["ISIN"]
+            isin = row['ISIN']
             symbol = self.isin_lookup.get(isin)
             if symbol is None:
                 logger.error(
-                    f"Could not fetch isin {row['ISIN']} from supplied ISINs {list(self.isin_lookup.keys())}"
+                    f'Could not fetch isin {row["ISIN"]} from supplied ISINs {list(self.isin_lookup.keys())}'
                 )
                 continue
             amount_div = amount.Amount(row[FP_proceeds], currency)
@@ -280,20 +262,20 @@ class FinpensionImporter(Importer):
                 ),
             ]
 
-            metadict = {"isin": isin}
+            metadict = {'isin': isin}
             per_share_number = row[FP_asseet_price]
             if not per_share_number.is_nan():
                 pershare = amount.Amount(row[FP_asseet_price], currency)
-                metadict.update({"per_share": pershare})
+                metadict.update({'per_share': pershare})
 
-            meta = data.new_metadata("dividend", 0, metadict)
+            meta = data.new_metadata('dividend', 0, metadict)
             bean_transactions.append(
                 data.Transaction(
                     meta,  # could add div per share, ISIN,....
-                    row["Date"],
+                    row['Date'],
                     self.flag,
                     isin,  # payee
-                    f"Dividend {symbol}; {row['Asset Name']}",
+                    f'Dividend {symbol}; {row["Asset Name"]}',
                     data.EMPTY_SET,
                     data.EMPTY_SET,
                     postings,
@@ -320,18 +302,16 @@ class FinpensionImporter(Importer):
                     None,
                     None,
                 ),
-                data.Posting(
-                    self.getLiquidityAccount(currency), amount_, None, None, None, None
-                ),
+                data.Posting(self.getLiquidityAccount(currency), amount_, None, None, None, None),
             ]
-            meta = data.new_metadata("Interest", 0)
+            meta = data.new_metadata('Interest', 0)
             bean_transactions.append(
                 data.Transaction(
                     meta,  # could add div per share, ISIN,....
-                    row["Date"],
+                    row['Date'],
                     self.flag,
-                    "Finpension",  # payee
-                    "Interest",
+                    'Finpension',  # payee
+                    'Interest',
                     data.EMPTY_SET,
                     data.EMPTY_SET,
                     postings,
@@ -345,15 +325,15 @@ class FinpensionImporter(Importer):
         # simply make a balance for all values, the correct one should be one of them
 
         bean_transactions = []
-        df = df[df["Date"] == df["Date"].max()]
+        df = df[df['Date'] == df['Date'].max()]
         for _idx, row in df.iterrows():
             currency = row[FP_currency]
-            amount_ = amount.Amount(row["Balance"], currency)
-            meta = data.new_metadata("balance", 0)
+            amount_ = amount.Amount(row['Balance'], currency)
+            meta = data.new_metadata('balance', 0)
             bean_transactions.append(
                 data.Balance(
                     meta,
-                    row["Date"] + timedelta(days=1),  # see tariochtools EC imp.
+                    row['Date'] + timedelta(days=1),  # see tariochtools EC imp.
                     self.getLiquidityAccount(currency),
                     amount_,
                     None,
@@ -373,19 +353,17 @@ class FinpensionImporter(Importer):
             # make the postings. two for deposits
             postings = [
                 data.Posting(self.deposit_account, -amount_, None, None, None, None),
-                data.Posting(
-                    self.getLiquidityAccount(currency), amount_, None, None, None, None
-                ),
+                data.Posting(self.getLiquidityAccount(currency), amount_, None, None, None, None),
             ]
-            meta = data.new_metadata("deposit/withdrawal", 0)
+            meta = data.new_metadata('deposit/withdrawal', 0)
             bean_transactions.append(
                 data.Transaction(
                     meta,  # could add div per share, ISIN,....
-                    row["Date"],
+                    row['Date'],
                     self.flag,
-                    "Finpension",  # payee
-                    "deposit / withdrawal",
-                    set(["s3a-deposit"]),
+                    'Finpension',  # payee
+                    'deposit / withdrawal',
+                    set(['s3a-deposit']),
                     data.EMPTY_SET,
                     postings,
                 )

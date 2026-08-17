@@ -50,14 +50,12 @@ except ImportError:
 
 # List of available importers (only those that imported successfully)
 __all__ = [
-    name
-    for name, module in locals().items()
-    if module is not None and not name.startswith("_")
+    name for name, module in locals().items() if module is not None and not name.startswith('_')
 ]
 
 # Metadata
 SUPPORTED_INSTITUTIONS = {
-    "swiss": ["finpension", "viac", "viseca", "viseca_csv", "yuh"],
-    "international": ["ibkr", "revolut"],
-    "other": ["firefly_iii"],
+    'swiss': ['finpension', 'viac', 'viseca', 'viseca_csv', 'yuh'],
+    'international': ['ibkr', 'revolut'],
+    'other': ['firefly_iii'],
 }
