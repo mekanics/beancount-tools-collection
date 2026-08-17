@@ -1,3 +1,14 @@
+"""Beancount Importer for Viseca JSON transaction exports.
+
+The Viseca JSON export carries a PFM category id. That category is recorded as
+metadata so a categorization layer can match on it; this importer does not map
+it to an expense account. Writing a placeholder expense account here would make
+the transaction look complete and disable hooks such as ``beancount-hooks``.
+
+When ``split_expense_account`` is set, the partner's share is configuration —
+post it explicitly and leave the residual for the hooks to fill.
+"""
+
 import json
 import math
 import re
@@ -18,7 +29,6 @@ class VisecaImporter(Importer):
         self,
         account='Liabilities:CreditCard:Viseca',
         regex=r'viseca.*\.json',
-        category_map=None,
         split_expense_account=None,
         split_ratio=0.5,
     ):
@@ -27,17 +37,6 @@ class VisecaImporter(Importer):
         self.flag = '*'
         self.split_expense_account = split_expense_account
         self.split_ratio = Decimal(str(split_ratio))
-        # Default category mapping if none provided
-        self.category_map = category_map or {
-            'food_and_drink': 'Expenses:Food',
-            'groceries': 'Expenses:Groceries',
-            'shopping': 'Expenses:Shopping',
-            'travel': 'Expenses:Travel',
-            'personal_care': 'Expenses:PersonalCare',
-            'leisure': 'Expenses:Leisure',
-            'transport': 'Expenses:Transport',
-            # Add more mappings as needed
-        }
 
     def identify(self, filepath):
         result = bool(re.search(self.regex, filepath, re.IGNORECASE))
@@ -84,7 +83,6 @@ class VisecaImporter(Importer):
                     )
                     continue
 
-                # Category mapping
                 pfm_cat = safe_value(row.get('pfmCategory.id')) or 'other'
                 if pfm_cat == 'deposits':
                     continue  # Ignore payment transactions
@@ -92,17 +90,13 @@ class VisecaImporter(Importer):
                 # Parse date
                 date = pd.to_datetime(row['date']).date()
                 payee = (
-                    safe_value(row.get('prettyName'))
-                    or safe_value(row.get('merchantName'))
-                    or 'Unknown'
+                    safe_value(row.get('prettyName')) or safe_value(row.get('merchantName')) or None
                 )
                 details = safe_value(row.get('details')) or ''
                 currency = safe_value(row.get('currency')) or 'CHF'
                 amt = Decimal(str(row['amount']))
                 # Viseca: negative = refund, positive = expense
                 amt = -amt if amt < 0 else amt
-
-                expense_account = self.category_map.get(pfm_cat, 'Expenses:Unknown')
 
                 # Foreign currency handling
                 orig_amt = safe_value(row.get('originalAmount'))
@@ -120,26 +114,19 @@ class VisecaImporter(Importer):
                         None,
                     )
                 )
-                # Expense posting(s)
+                # Partner share is configuration — post it explicitly and leave
+                # the residual for a categorization layer to fill.
                 if self.split_expense_account:
-                    # Split the amount according to split_ratio and round to 3 decimal places
                     amt_main = (amt * self.split_ratio).quantize(Decimal('0.001'))
                     amt_split = amt - amt_main  # Ensure total matches original
 
-                    # Format amounts to 2 decimals if they end with 0, otherwise keep 3 decimals
-                    def format_amount(amt):
-                        return amt.quantize(Decimal('0.01')) if amt % Decimal('0.01') == 0 else amt
-
-                    postings.append(
-                        data.Posting(
-                            expense_account,
-                            amount.Amount(format_amount(amt_main), currency),
-                            None,
-                            None,
-                            None,
-                            None,
+                    def format_amount(value):
+                        return (
+                            value.quantize(Decimal('0.01'))
+                            if value % Decimal('0.01') == 0
+                            else value
                         )
-                    )
+
                     postings.append(
                         data.Posting(
                             self.split_expense_account,
@@ -150,27 +137,6 @@ class VisecaImporter(Importer):
                             None,
                         )
                     )
-                else:
-                    postings.append(
-                        data.Posting(
-                            expense_account,
-                            amount.Amount(amt, currency),
-                            None,
-                            None,
-                            None,
-                            None,
-                        )
-                    )
-
-                # # If foreign currency, add a posting for the original amount
-                # if orig_amt and orig_cur and orig_cur != currency:
-                #     postings.append(
-                #         data.Posting(
-                #             expense_account,
-                #             amount.Amount(Decimal(str(orig_amt)), orig_cur),
-                #             None, None, None, None
-                #         )
-                #     )
 
                 meta_dict = {
                     'transactionId': safe_value(row.get('transactionId')),

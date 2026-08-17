@@ -12,6 +12,12 @@ Foreign currency transactions (e.g., CARD_TRANSACTION_OUT in USD) are automatica
 corresponding BANK_AUTO_ORDER_EXECUTED entries into a single CHF transaction with metadata for the
 original currency details.
 
+The importer names the bank leg and any fee the export states. It does not
+guess an expense account — that is left to a categorization layer
+(``beancount-hooks`` Ruleset / predictors, or manual entry in Fava). Writing
+a placeholder expense account here would make the transaction look complete
+and disable those hooks.
+
 The file is recognised by its column header, so the download works unrenamed; pass
 ``regex`` as well if you import several Yuh accounts separately.
 
@@ -297,17 +303,6 @@ class YuhImporter(Importer):
                     )
                 )
 
-            postings.append(
-                data.Posting(
-                    'Expenses:Unknown',
-                    amount.Amount(chf_debit - fee, 'CHF'),
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            )
-
             txn = data.Transaction(
                 meta=meta,
                 date=orig_date,
@@ -367,17 +362,6 @@ class YuhImporter(Importer):
                         None,
                     )
                 )
-
-            postings.append(
-                data.Posting(
-                    'Expenses:Unknown',
-                    amount.Amount(chf_debit, 'CHF'),
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-            )
 
             txn = data.Transaction(
                 meta=meta,

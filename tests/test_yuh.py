@@ -300,3 +300,108 @@ def test_quoted_german_goal_csv_extracts_clean_accounts(importer, tmp_path):
         [Decimal('-500.00'), Decimal('500.00')],
         [Decimal('1000.00'), Decimal('-1000.00')],
     ]
+
+
+def _residual(entry):
+    from beancount.core import convert, interpolate
+
+    return interpolate.compute_residual(entry.postings).reduce(convert.get_units)
+
+
+def test_combined_foreign_card_transaction_leaves_the_expense_leg_blank(importer, tmp_path):
+    """USD card purchase + matching CHF auto-exchange: bank and fee only, residual is the net."""
+    path = make_csv(
+        tmp_path,
+        {
+            'DATE': '05/08/2026',
+            'ACTIVITY TYPE': 'CARD_TRANSACTION_OUT',
+            'ACTIVITY NAME': 'Foreign Merchant',
+            'DEBIT': '-50.00',
+            'DEBIT CURRENCY': 'USD',
+            'CREDIT': '',
+            'CREDIT CURRENCY': '',
+            'FEES/COMMISSION': '0',
+        },
+        {
+            'DATE': '05/08/2026',
+            'ACTIVITY TYPE': 'BANK_AUTO_ORDER_EXECUTED',
+            'ACTIVITY NAME': 'Auto FX',
+            'DEBIT': '-45.50',
+            'DEBIT CURRENCY': 'CHF',
+            'CREDIT': '50.00',
+            'CREDIT CURRENCY': 'USD',
+            'FEES/COMMISSION': '0.50',
+            'PRICE PER UNIT': '0.91',
+        },
+    )
+    entries = importer.extract(path)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.payee == 'Foreign Merchant'
+    assert entry.meta['original-amount'] == '50.0 USD'
+    assert entry.meta['exchange-rate'] == '0.91'
+    assert _accounts(entry) == [ACCOUNT, 'Expenses:Fees:Yuh']
+    assert _numbers(entry) == [Decimal('-45.50'), Decimal('0.50')]
+    residual = _residual(entry)
+    assert list(residual)[0].units.number == Decimal('-45.00')
+    assert list(residual)[0].units.currency == 'CHF'
+
+
+def test_combined_foreign_card_transaction_without_fee_is_single_legged(importer, tmp_path):
+    path = make_csv(
+        tmp_path,
+        {
+            'DATE': '05/08/2026',
+            'ACTIVITY TYPE': 'CARD_TRANSACTION_OUT',
+            'ACTIVITY NAME': 'Foreign Merchant',
+            'DEBIT': '-20.00',
+            'DEBIT CURRENCY': 'EUR',
+            'CREDIT': '',
+            'CREDIT CURRENCY': '',
+            'FEES/COMMISSION': '0',
+        },
+        {
+            'DATE': '05/08/2026',
+            'ACTIVITY TYPE': 'BANK_AUTO_ORDER_EXECUTED',
+            'ACTIVITY NAME': 'Auto FX',
+            'DEBIT': '-19.00',
+            'DEBIT CURRENCY': 'CHF',
+            'CREDIT': '20.00',
+            'CREDIT CURRENCY': 'EUR',
+            'FEES/COMMISSION': '0',
+        },
+    )
+    entries = importer.extract(path)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert _accounts(entry) == [ACCOUNT]
+    assert _numbers(entry) == [Decimal('-19.00')]
+    residual = _residual(entry)
+    assert list(residual)[0].units.number == Decimal('-19.00')
+
+
+def test_standalone_auto_exchange_leaves_the_expense_leg_blank(importer, tmp_path):
+    """Auto-exchange with no matching foreign row: bank and fee only."""
+    entry = _extract_one(
+        importer,
+        tmp_path,
+        DATE='05/08/2026',
+        **{
+            'ACTIVITY TYPE': 'BANK_AUTO_ORDER_EXECUTED',
+            'ACTIVITY NAME': 'Auto FX',
+            'DEBIT': '-40.00',
+            'DEBIT CURRENCY': 'CHF',
+            'CREDIT': '45.00',
+            'CREDIT CURRENCY': 'USD',
+            'FEES/COMMISSION': '1.00',
+            'PRICE PER UNIT': '0.89',
+        },
+    )
+    assert entry.narration == 'Auto-exchange'
+    assert entry.meta['original-amount'] == '45.0 USD'
+    assert _accounts(entry) == [ACCOUNT, 'Expenses:Fees:Yuh']
+    # Bank posts -(debit + fee); fee posts +fee; residual is -debit.
+    assert _numbers(entry) == [Decimal('-41.00'), Decimal('1.00')]
+    residual = _residual(entry)
+    assert list(residual)[0].units.number == Decimal('-40.00')
+    assert list(residual)[0].units.currency == 'CHF'
