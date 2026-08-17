@@ -1,12 +1,14 @@
-"""Unit tests for the Yuh CSV importer identify() fingerprint.
+"""Unit tests for the Yuh CSV importer.
 
 No network and no credentials required. The committed fixture is synthetic: a
 real export carries personal activity, and this repo is public.
 
-A full extract suite is out of scope; the smoke test exists so HEADER_COLUMNS
-cannot drift from the names pandas reads.
+identify() tests lock HEADER_COLUMNS to the names pandas reads. Goal extract
+tests cover English and German GOAL_DEPOSIT / GOAL_WITHDRAWAL rows.
 """
 
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,7 @@ SAMPLE = Path(__file__).parent / 'data' / 'yuh_sample.csv'
 HEADER_LINE = ';'.join(HEADER_COLUMNS)
 
 ACCOUNT = 'Assets:Cash:Yuh:Pay:CHF'
+GOALS_BASE = 'Assets:Cash:Yuh:Save'
 
 DEFAULT_ROW = {
     'DATE': '05/08/2026',
@@ -129,3 +132,171 @@ def test_extract_smoke_on_the_sample(importer):
     entries = importer.extract(str(SAMPLE))
     assert entries
     assert all(isinstance(entry, data.Transaction) for entry in entries)
+
+
+def _accounts(entry):
+    return [posting.account for posting in entry.postings]
+
+
+def _numbers(entry):
+    return [posting.units.number for posting in entry.postings]
+
+
+def _extract_one(importer, tmp_path, **row):
+    entries = importer.extract(make_csv(tmp_path, row))
+    assert len(entries) == 1
+    return entries[0]
+
+
+def test_german_goal_deposit_uses_recipient_for_the_account(importer, tmp_path):
+    entry = _extract_one(
+        importer,
+        tmp_path,
+        DATE='29/05/2026',
+        **{
+            'ACTIVITY TYPE': 'GOAL_DEPOSIT',
+            'ACTIVITY NAME': 'Einzahlung für «S3a»',
+            'DEBIT': '',
+            'DEBIT CURRENCY': '',
+            'CREDIT': '500.00',
+            'CREDIT CURRENCY': 'CHF',
+            'RECIPIENT': 'S3a',
+        },
+    )
+    assert entry.date == date(2026, 5, 29)
+    assert entry.payee == 'self'
+    assert entry.narration == 'Einzahlung für «S3a»'
+    assert _accounts(entry) == [ACCOUNT, f'{GOALS_BASE}:S3a']
+    assert _numbers(entry) == [Decimal('-500.00'), Decimal('500.00')]
+    assert entry.postings[0].units.currency == 'CHF'
+
+
+def test_german_goal_deposit_steuern_uses_recipient_for_the_account(importer, tmp_path):
+    entry = _extract_one(
+        importer,
+        tmp_path,
+        DATE='29/05/2026',
+        **{
+            'ACTIVITY TYPE': 'GOAL_DEPOSIT',
+            'ACTIVITY NAME': 'Einzahlung für «Steuern»',
+            'DEBIT': '',
+            'DEBIT CURRENCY': '',
+            'CREDIT': '500.00',
+            'CREDIT CURRENCY': 'CHF',
+            'RECIPIENT': 'Steuern',
+        },
+    )
+    assert entry.payee == 'self'
+    assert entry.narration == 'Einzahlung für «Steuern»'
+    assert _accounts(entry) == [ACCOUNT, f'{GOALS_BASE}:Steuern']
+    assert _numbers(entry) == [Decimal('-500.00'), Decimal('500.00')]
+
+
+def test_german_goal_withdrawal_uses_sender_for_the_account(importer, tmp_path):
+    entry = _extract_one(
+        importer,
+        tmp_path,
+        DATE='13/07/2026',
+        **{
+            'ACTIVITY TYPE': 'GOAL_WITHDRAWAL',
+            'ACTIVITY NAME': 'Abhebung vom «Steuern»',
+            'DEBIT': '-1000.00',
+            'DEBIT CURRENCY': 'CHF',
+            'CREDIT': '',
+            'CREDIT CURRENCY': '',
+            'SENDER': 'Steuern',
+        },
+    )
+    assert entry.date == date(2026, 7, 13)
+    assert entry.payee == 'self'
+    assert entry.narration == 'Abhebung vom «Steuern»'
+    assert _accounts(entry) == [ACCOUNT, f'{GOALS_BASE}:Steuern']
+    assert _numbers(entry) == [Decimal('1000.00'), Decimal('-1000.00')]
+    assert entry.postings[0].units.currency == 'CHF'
+
+
+def test_english_goal_deposit_keeps_account_and_narration(importer, tmp_path):
+    entry = _extract_one(
+        importer,
+        tmp_path,
+        **{
+            'ACTIVITY TYPE': 'GOAL_DEPOSIT',
+            'ACTIVITY NAME': 'Deposit to «MwSt (6.2%)»',
+            'DEBIT': '',
+            'DEBIT CURRENCY': '',
+            'CREDIT': '283.50',
+            'CREDIT CURRENCY': 'CHF',
+            'RECIPIENT': 'MwSt (6.2%)',
+        },
+    )
+    assert entry.payee == 'self'
+    assert entry.narration == 'Deposit to «MwSt (6.2%)»'
+    assert _accounts(entry) == [ACCOUNT, f'{GOALS_BASE}:MwSt']
+    assert _numbers(entry) == [Decimal('-283.50'), Decimal('283.50')]
+
+
+def test_english_goal_withdrawal_strips_parentheses_from_the_account(importer, tmp_path):
+    entry = _extract_one(
+        importer,
+        tmp_path,
+        DATE='18/04/2026',
+        **{
+            'ACTIVITY TYPE': 'GOAL_WITHDRAWAL',
+            'ACTIVITY NAME': 'Withdrawal from «Taxes (16%)»',
+            'DEBIT': '-20000.00',
+            'DEBIT CURRENCY': 'CHF',
+            'CREDIT': '',
+            'CREDIT CURRENCY': '',
+            'SENDER': 'Taxes (16%)',
+        },
+    )
+    assert entry.payee == 'self'
+    assert entry.narration == 'Withdrawal from «Taxes (16%)»'
+    assert _accounts(entry) == [ACCOUNT, f'{GOALS_BASE}:Taxes']
+    assert _numbers(entry) == [Decimal('20000.00'), Decimal('-20000.00')]
+
+
+def test_goal_account_falls_back_to_guillemets_when_recipient_is_empty(importer, tmp_path):
+    entry = _extract_one(
+        importer,
+        tmp_path,
+        **{
+            'ACTIVITY TYPE': 'GOAL_DEPOSIT',
+            'ACTIVITY NAME': 'Einzahlung für «S3a»',
+            'DEBIT': '',
+            'DEBIT CURRENCY': '',
+            'CREDIT': '500.00',
+            'CREDIT CURRENCY': 'CHF',
+            'RECIPIENT': '',
+        },
+    )
+    assert entry.narration == 'Einzahlung für «S3a»'
+    assert _accounts(entry) == [ACCOUNT, f'{GOALS_BASE}:S3a']
+
+
+def test_quoted_german_goal_csv_extracts_clean_accounts(importer, tmp_path):
+    path = tmp_path / 'yuh_german_goals.csv'
+    path.write_text(
+        HEADER_LINE
+        + '\n'
+        + '29/05/2026;GOAL_DEPOSIT;"""Einzahlung für «S3a»""";;;500.00;CHF;;;"""S3a""";;;;;;\n'
+        + '29/05/2026;GOAL_DEPOSIT;"""Einzahlung für «Steuern»""";;;500.00;CHF;;;"""Steuern""";;;;;;\n'
+        + '13/07/2026;GOAL_WITHDRAWAL;"""Abhebung vom «Steuern»""";-1000.00;CHF;;;;;"""Steuern""";;;;;;\n',
+        encoding='utf-8',
+    )
+    entries = importer.extract(str(path))
+    assert [entry.narration for entry in entries] == [
+        'Einzahlung für «S3a»',
+        'Einzahlung für «Steuern»',
+        'Abhebung vom «Steuern»',
+    ]
+    assert [_accounts(entry)[1] for entry in entries] == [
+        f'{GOALS_BASE}:S3a',
+        f'{GOALS_BASE}:Steuern',
+        f'{GOALS_BASE}:Steuern',
+    ]
+    assert [_numbers(entry) for entry in entries] == [
+        [Decimal('-500.00'), Decimal('500.00')],
+        [Decimal('-500.00'), Decimal('500.00')],
+        [Decimal('1000.00'), Decimal('-1000.00')],
+    ]

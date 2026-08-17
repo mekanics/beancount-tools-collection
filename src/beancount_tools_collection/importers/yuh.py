@@ -4,7 +4,8 @@ Beancount importer for Yuh CSV exports.
 This importer is designed to handle the Yuh CSV exports, which contain a variety of transaction types.
 It supports transactions, goal deposits, goal withdrawals.
 
-The name of the goal account is used to identify the goal account. You can add more info in parrentheses, it will be removed.
+The goal account leaf comes from RECIPIENT (GOAL_DEPOSIT) or SENDER
+(GOAL_WITHDRAWAL). You can add more info in parentheses; it will be removed.
 Example: "Taxes (16%)" will be saved as "Taxes" (Assets:Cash:Yuh:Save:Taxes)
 
 Foreign currency transactions (e.g., CARD_TRANSACTION_OUT in USD) are automatically combined with their
@@ -395,17 +396,32 @@ class YuhImporter(Importer):
             logger.error(f'Error creating standalone exchange: {e}')
             return None
 
+    def _strip_goal_leaf(self, value) -> str:
+        """Return a Beancount account leaf from a Yuh goal label."""
+        if pd.isna(value):
+            return ''
+        name = str(value).strip().strip('"')
+        if not name:
+            return ''
+        return re.sub(r'\s*\([^)]*\)', '', name).strip()
+
+    def _goal_name(self, row) -> str:
+        """Goal account leaf: RECIPIENT on deposit, SENDER on withdrawal."""
+        column = 'RECIPIENT' if row['ACTIVITY TYPE'] == 'GOAL_DEPOSIT' else 'SENDER'
+        name = self._strip_goal_leaf(row[column])
+        if name:
+            return name
+        text = str(row['ACTIVITY NAME']).strip('"')
+        match = re.search(r'«([^»]+)»', text)
+        if match:
+            return self._strip_goal_leaf(match.group(1))
+        return self._strip_goal_leaf(text)
+
     def _create_goal_transaction(self, filepath, row):
         """Create a goal deposit or withdrawal transaction."""
         try:
             is_deposit = row['ACTIVITY TYPE'] == 'GOAL_DEPOSIT'
-            goal_name = str(row['ACTIVITY NAME']).strip('"')
-            goal_name = (
-                goal_name.replace('Deposit to «', '')
-                .replace('Withdrawal from «', '')
-                .replace('»', '')
-            )
-            goal_name = re.sub(r'\s*\([^)]*\)', '', goal_name).strip()
+            goal_name = self._goal_name(row)
             goal_account = f'{self.goals_base_account}:{goal_name}'
 
             idx = int(row['_orig_idx'])
@@ -429,7 +445,7 @@ class YuhImporter(Importer):
                 date=date,
                 flag='*',
                 payee='self',
-                narration=f'{"Deposit to" if is_deposit else "Withdrawal from"} {goal_name}',
+                narration=str(row['ACTIVITY NAME']).strip('"'),
                 tags=data.EMPTY_SET,
                 links=data.EMPTY_SET,
                 postings=[
