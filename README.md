@@ -155,7 +155,7 @@ Each importer has specific requirements and configuration options:
 - **[Interactive Brokers](docs/importers/ibkr.md)** - FlexQuery configuration
 - **[VIAC](docs/importers/viac.md)** - JSON export setup
 - **[Viseca](#viseca-csv-bill-exports)** - CSV bill exports (primary) and JSON (archival)
-- **[Yuh](docs/importers/yuh.md)** - CSV export configuration
+- **[Yuh](#yuh-csv-exports)** - CSV account-activities exports
 
 ### Account Structure Examples
 
@@ -207,6 +207,12 @@ Expenses:
 ```
 
 ## Notes
+
+### Yuh CSV exports
+
+`YuhImporter` reads the account-activities CSV the Yuh app exports. It recognises
+the file by its column header, so the download works unrenamed; pass `regex` as
+well if you import several Yuh accounts separately.
 
 ### Viseca CSV bill exports
 

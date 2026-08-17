@@ -11,34 +11,81 @@ Foreign currency transactions (e.g., CARD_TRANSACTION_OUT in USD) are automatica
 corresponding BANK_AUTO_ORDER_EXECUTED entries into a single CHF transaction with metadata for the
 original currency details.
 
+The file is recognised by its column header, so the download works unrenamed; pass
+``regex`` as well if you import several Yuh accounts separately.
+
 """
 
+from __future__ import annotations
+
+import os
 import re
 
 import pandas as pd
 from beancount.core import amount, data
 from beancount.core.number import D
+from beangulp import utils
 from beangulp.importer import Importer
 from loguru import logger
 
+__all__ = [
+    'HEADER_COLUMNS',
+    'YuhImporter',
+]
+
+
+HEADER_COLUMNS = (
+    'DATE',
+    'ACTIVITY TYPE',
+    'ACTIVITY NAME',
+    'DEBIT',
+    'DEBIT CURRENCY',
+    'CREDIT',
+    'CREDIT CURRENCY',
+    'CARD NUMBER',
+    'LOCALITY',
+    'RECIPIENT',
+    'SENDER',
+    'FEES/COMMISSION',
+    'BUY/SELL',
+    'QUANTITY',
+    'ASSET',
+    'PRICE PER UNIT',
+)
+
+HEADER_RE = r'^\s*' + ';'.join(re.escape(column) for column in HEADER_COLUMNS)
+
+# Enough to cover the header line without reading the whole export.
+HEADER_PROBE_CHARS = 512
+
 
 class YuhImporter(Importer):
+    encoding = 'utf-8-sig'
+
     def __init__(
         self,
         account='Assets:Cash:Yuh:Pay:CHF',
         goals_base_account='Assets:Cash:Yuh:Save',
         fees_account='Expenses:Fees:Yuh',
-        regex='yuh_.*\\.csv',
+        regex: str | None = None,
     ):
         self.main_account = account
         self.goals_base_account = goals_base_account
         self.fees_account = fees_account
         self.regex = regex
 
-    def identify(self, filepath):
-        result = bool(re.search(self.regex, filepath, re.IGNORECASE))
-        logger.info(f"identify assertion for yuh importer and file '{filepath}': {result}")
-        return result
+    def identify(self, filepath: str) -> bool:
+        if self.regex and not re.search(self.regex, os.path.basename(filepath), re.IGNORECASE):
+            return False
+        try:
+            return utils.search_file_regexp(
+                filepath,
+                HEADER_RE,
+                nbytes=HEADER_PROBE_CHARS,
+                encoding=self.encoding,
+            )
+        except OSError:
+            return False
 
     def account(self, filepath):
         """The account to associate with this importer."""
