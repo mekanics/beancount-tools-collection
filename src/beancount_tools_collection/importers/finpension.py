@@ -175,10 +175,7 @@ class FinpensionImporter(Importer):
                 data.Posting(self.getAssetAccount(symbol), quantity, cost, None, None, None),
                 data.Posting(self.getLiquidityAccount(currency), proceeds, None, None, None, None),
             ]
-            if quantity.number > 0:
-                buy_sell = 'BUY'
-            else:
-                buy_sell = 'SELL'
+            buy_sell = 'BUY' if quantity.number > 0 else 'SELL'
             bean_transactions.append(
                 data.Transaction(
                     data.new_metadata('Buy', 0),
@@ -363,7 +360,7 @@ class FinpensionImporter(Importer):
                     self.flag,
                     'Finpension',  # payee
                     'deposit / withdrawal',
-                    set(['s3a-deposit']),
+                    {'s3a-deposit'},
                     data.EMPTY_SET,
                     postings,
                 )

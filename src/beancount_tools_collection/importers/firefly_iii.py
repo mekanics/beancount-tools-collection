@@ -12,13 +12,10 @@ class FireFlyImporter(Importer):
     """An importer for firefly-iii exports."""
 
     def identify(self, f):
-        if 'firefly' in f.name:
-            return True
-
-        return False
+        return 'firefly' in f.name
 
     def extract(self, filepath, existing=None):
-        entries = dict()
+        entries = {}
 
         with StringIO(filepath.contents()) as csvfile:
             reader = csv.DictReader(

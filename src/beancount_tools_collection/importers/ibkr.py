@@ -564,10 +564,7 @@ class IBKRImporter(Importer):
 
             tabs = {
                 report: pd.DataFrame(
-                    [
-                        {key: val for key, val in entry.__dict__.items()}
-                        for entry in flex_stmt.__dict__.get(report, [])
-                    ]
+                    [dict(entry.__dict__.items()) for entry in flex_stmt.__dict__.get(report, [])]
                 )
                 for report in reports
             }
@@ -1579,12 +1576,8 @@ def CollapseTradeSplits(tr):
 
 
 def isForex(symbol):
-    # retruns True if a transaction is a forex transaction.
-    b = re.search('(\\w{3})[.](\\w{3})', symbol)  # find something lile "USD.CHF"
-    if b is None:  # no forex transaction, rather a normal stock transaction
-        return False
-    else:
-        return True
+    # True when the symbol looks like a forex pair, e.g. "USD.CHF".
+    return re.search('(\\w{3})[.](\\w{3})', symbol) is not None
 
 
 def getForexCurrencies(symbol):

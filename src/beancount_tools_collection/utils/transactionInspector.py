@@ -1,5 +1,3 @@
-from typing import Optional
-
 from beancount.core import amount, data, flags
 
 
@@ -41,7 +39,7 @@ class TransactionInspector:
         self.transaction = self.transaction._replace(flag=flags.FLAG_WARNING)
         return self
 
-    def simplePosting(self, account, units: Optional[amount.Amount] = None):
+    def simplePosting(self, account, units: amount.Amount | None = None):
         self.transaction.postings.append(data.Posting(account, units, None, None, None, None))
         return self
 

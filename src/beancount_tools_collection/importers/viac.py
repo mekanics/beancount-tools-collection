@@ -220,7 +220,7 @@ class ViacImporter(Importer):
         return_txn = []
 
         # Skip transfer accounts (D1, D2)
-        for account_key in [k for k in transactions.keys() if not k.endswith(('D1', 'D2'))]:
+        for account_key in [k for k in transactions if not k.endswith(('D1', 'D2'))]:
             # Store original main_account to restore after processing each account
             original_account = self.main_account
 
@@ -324,10 +324,7 @@ class ViacImporter(Importer):
 
             meta = data.new_metadata('Trade', idx, metadata)
 
-            if proceeds.number < 0:
-                buy_sell = 'BUY'
-            else:
-                buy_sell = 'SELL'
+            buy_sell = 'BUY' if proceeds.number < 0 else 'SELL'
             bean_transactions.append(
                 data.Transaction(
                     meta,
@@ -481,7 +478,7 @@ class ViacImporter(Importer):
                     self.flag,
                     'self',  # payee
                     'deposit / withdrawal',
-                    set(['s3a-deposit']),
+                    {'s3a-deposit'},
                     data.EMPTY_SET,
                     postings,
                 )
