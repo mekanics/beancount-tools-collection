@@ -242,6 +242,12 @@ IBKR Flex fetch and credential failures (expired/invalid token, bad `ibkr.yaml`,
 
 Exception messages, log lines, and raised tracebacks redact the Flex token (and do not chain secret-bearing upstream exceptions). If older logs were shared while a token was still live, rotate the token under Reports > Flex Web Service.
 
+### Publishing to PyPI
+
+Push a `v*` tag. That is the only event that publishes: the Release workflow
+tests, uploads to PyPI, then creates the matching GitHub Release. Creating or
+editing a Release in the GitHub UI does not upload again.
+
 ## Contributing
 
 We welcome contributions! Here's how you can help:
