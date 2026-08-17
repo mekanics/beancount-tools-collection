@@ -25,14 +25,14 @@ from ibflex import client, parser
 
 class Source(source.Source):
     def get_latest_price(self, ticker: str):
-        print("get_latest_price")
-        token: str = environ["IBKR_TOKEN"]
-        queryId: str = environ["IBKR_QUERY_ID"]
+        print('get_latest_price')
+        token: str = environ['IBKR_TOKEN']
+        queryId: str = environ['IBKR_QUERY_ID']
 
         try:
             response = client.download(token, queryId)
         except client.ResponseCodeError as e:
-            if e.code == "1018":
+            if e.code == '1018':
                 sleep(10)
                 response = client.download(token, queryId)
             else:
@@ -41,12 +41,12 @@ class Source(source.Source):
         statement = parser.parse(response)
         for custStatement in statement.FlexStatements:
             for position in custStatement.OpenPositions:
-                if position.symbol.rstrip("z") == ticker:
+                if position.symbol.rstrip('z') == ticker:
                     price = D(position.markPrice)
-                    timezone = tz.gettz(environ.get("TZ", "Europe/Zurich"))
-                    time = datetime.combine(
-                        position.reportDate, datetime.min.time()
-                    ).astimezone(timezone)
+                    timezone = tz.gettz(environ.get('TZ', 'Europe/Zurich'))
+                    time = datetime.combine(position.reportDate, datetime.min.time()).astimezone(
+                        timezone
+                    )
 
                     return source.SourcePrice(price, time, position.currency)
 

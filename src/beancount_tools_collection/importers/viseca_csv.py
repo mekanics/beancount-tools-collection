@@ -38,13 +38,13 @@ from beangulp.similar import heuristic_comparator
 from loguru import logger
 
 __all__ = [
-    "HEADER_COLUMNS",
-    "KNOWN_PENDING_STATES",
-    "OptionalAmount",
-    "RowKind",
-    "SkipReason",
-    "VisecaCsvError",
-    "VisecaCsvImporter",
+    'HEADER_COLUMNS',
+    'KNOWN_PENDING_STATES',
+    'OptionalAmount',
+    'RowKind',
+    'SkipReason',
+    'VisecaCsvError',
+    'VisecaCsvImporter',
 ]
 
 
@@ -59,66 +59,66 @@ class VisecaCsvError(Error):
 
 
 HEADER_COLUMNS = (
-    "TransactionId",
-    "CardId",
-    "Date",
-    "ValutaDate",
-    "Amount",
-    "Currency",
-    "OriginalAmount",
-    "OriginalCurrency",
-    "MerchantName",
-    "MerchantPlace",
-    "MerchantCountry",
-    "StateType",
-    "Details",
-    "Type",
-    "Exchange Rate",
+    'TransactionId',
+    'CardId',
+    'Date',
+    'ValutaDate',
+    'Amount',
+    'Currency',
+    'OriginalAmount',
+    'OriginalCurrency',
+    'MerchantName',
+    'MerchantPlace',
+    'MerchantCountry',
+    'StateType',
+    'Details',
+    'Type',
+    'Exchange Rate',
 )
 
-HEADER_RE = r"^\s*" + ",".join(re.escape(column) for column in HEADER_COLUMNS)
+HEADER_RE = r'^\s*' + ','.join(re.escape(column) for column in HEADER_COLUMNS)
 
 # Enough to cover the header line without reading the whole bill.
 HEADER_PROBE_CHARS = 512
 
-BOOKED_STATE = "booked"
+BOOKED_STATE = 'booked'
 
 # States that are known and intentionally not imported. Anything outside this
 # set is treated as unrecognised and reported rather than dropped in silence.
-KNOWN_PENDING_STATES = frozenset({"pending", "authorized", "authorised", "reserved"})
+KNOWN_PENDING_STATES = frozenset({'pending', 'authorized', 'authorised', 'reserved'})
 
-DEFAULT_CURRENCY = "CHF"
+DEFAULT_CURRENCY = 'CHF'
 
-TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+TIMESTAMP_FORMAT = '%Y-%m-%d %H:%M:%S'
 
-CENTS = Decimal("0.01")
+CENTS = Decimal('0.01')
 ONE = Decimal(1)
 
-META_TRANSACTION_ID = "transactionId"
-META_VALUTA_DATE = "valutaDate"
-META_CARD_ID = "cardId"
-META_MERCHANT_PLACE = "merchantPlace"
-META_MERCHANT_COUNTRY = "merchantCountry"
-META_ORIGINAL_AMOUNT = "originalAmount"
-META_ORIGINAL_CURRENCY = "originalCurrency"
-META_EXCHANGE_RATE = "exchangeRate"
+META_TRANSACTION_ID = 'transactionId'
+META_VALUTA_DATE = 'valutaDate'
+META_CARD_ID = 'cardId'
+META_MERCHANT_PLACE = 'merchantPlace'
+META_MERCHANT_COUNTRY = 'merchantCountry'
+META_ORIGINAL_AMOUNT = 'originalAmount'
+META_ORIGINAL_CURRENCY = 'originalCurrency'
+META_EXCHANGE_RATE = 'exchangeRate'
 
 
 class RowKind(enum.Enum):
     """What a booked row represents."""
 
-    EXPENSE = "expense"
-    REFUND = "refund"
-    PAYMENT = "payment"
+    EXPENSE = 'expense'
+    REFUND = 'refund'
+    PAYMENT = 'payment'
 
 
 class SkipReason(enum.Enum):
     """Why a row produced no entry."""
 
-    PENDING = "not yet booked"
-    UNKNOWN_STATE = "unrecognised StateType"
-    ZERO_AMOUNT = "zero amount"
-    UNPARSEABLE = "unparseable"
+    PENDING = 'not yet booked'
+    UNKNOWN_STATE = 'unrecognised StateType'
+    ZERO_AMOUNT = 'zero amount'
+    UNPARSEABLE = 'unparseable'
 
 
 class OptionalAmount(csvbase.Column):
@@ -147,7 +147,7 @@ def _narrow_to_cents(value: Decimal) -> tuple[Decimal, bool]:
 
 
 def _text(value: str | None) -> str:
-    return value.strip() if value else ""
+    return value.strip() if value else ''
 
 
 class _InheritingCSVMeta(csvbase.CSVMeta):
@@ -163,15 +163,13 @@ class _InheritingCSVMeta(csvbase.CSVMeta):
         cls = super().__new__(mcs, name, bases, dct)
         merged = {}
         for base in reversed(cls.__mro__[1:]):
-            merged.update(getattr(base, "columns", None) or {})
+            merged.update(getattr(base, 'columns', None) or {})
         merged.update(cls.columns)
         cls.columns = merged
         return cls
 
 
-class VisecaCsvImporter(
-    beangulp.Importer, csvbase.CSVReader, metaclass=_InheritingCSVMeta
-):
+class VisecaCsvImporter(beangulp.Importer, csvbase.CSVReader, metaclass=_InheritingCSVMeta):
     """Importer for Viseca One CSV bill exports.
 
     Args:
@@ -190,32 +188,32 @@ class VisecaCsvImporter(
         for review.
     """
 
-    encoding = "utf-8-sig"  # the export carries a UTF-8 BOM
+    encoding = 'utf-8-sig'  # the export carries a UTF-8 BOM
     comments = None  # a Details field must never be read as a comment
-    dialect = "excel"
+    dialect = 'excel'
 
     # Column names must not collide with Importer method names: CSVMeta strips
     # Column attributes out of the class namespace, so a column named `date`
     # would shadow the date() method.
-    transaction_id = csvbase.Column("TransactionId")
-    card_id = csvbase.Column("CardId")
-    txn_date = csvbase.Date("Date", TIMESTAMP_FORMAT)
-    valuta_date = csvbase.Date("ValutaDate", TIMESTAMP_FORMAT)
-    amount = csvbase.Amount("Amount")
-    currency = csvbase.Column("Currency")
-    original_amount = OptionalAmount("OriginalAmount")
-    original_currency = csvbase.Column("OriginalCurrency")
-    merchant = csvbase.Column("MerchantName")
-    place = csvbase.Column("MerchantPlace")
-    country = csvbase.Column("MerchantCountry")
-    state = csvbase.Column("StateType")
-    details = csvbase.Column("Details")
-    kind = csvbase.Column("Type")
-    exchange_rate = OptionalAmount("Exchange Rate")
+    transaction_id = csvbase.Column('TransactionId')
+    card_id = csvbase.Column('CardId')
+    txn_date = csvbase.Date('Date', TIMESTAMP_FORMAT)
+    valuta_date = csvbase.Date('ValutaDate', TIMESTAMP_FORMAT)
+    amount = csvbase.Amount('Amount')
+    currency = csvbase.Column('Currency')
+    original_amount = OptionalAmount('OriginalAmount')
+    original_currency = csvbase.Column('OriginalCurrency')
+    merchant = csvbase.Column('MerchantName')
+    place = csvbase.Column('MerchantPlace')
+    country = csvbase.Column('MerchantCountry')
+    state = csvbase.Column('StateType')
+    details = csvbase.Column('Details')
+    kind = csvbase.Column('Type')
+    exchange_rate = OptionalAmount('Exchange Rate')
 
     def __init__(
         self,
-        account: str = "Liabilities:CreditCard:Viseca",
+        account: str = 'Liabilities:CreditCard:Viseca',
         settlement_account: str | None = None,
         merchant_map: Mapping[str, str] | None = None,
         card_accounts: Mapping[str, str] | None = None,
@@ -260,12 +258,12 @@ class VisecaCsvImporter(
 
     def filename(self, filepath: str) -> str | None:
         billing_date = self.date(filepath)
-        return f"viseca_{billing_date:%Y-%m}.csv" if billing_date else None
+        return f'viseca_{billing_date:%Y-%m}.csv' if billing_date else None
 
     def extract(self, filepath: str, existing: list | None = None) -> list:
         rows = self._read_rows(filepath)
         if not rows:
-            logger.info(f"{filepath}: no data rows in bill")
+            logger.info(f'{filepath}: no data rows in bill')
             return []
 
         self._validate_cards(rows, filepath)
@@ -287,7 +285,7 @@ class VisecaCsvImporter(
                 self._note_skip(skipped, SkipReason.UNPARSEABLE, filepath, lineno, exc)
 
         self._report_skipped(filepath, len(rows), skipped)
-        logger.info(f"Extracted {len(entries)} entries from {filepath}")
+        logger.info(f'Extracted {len(entries)} entries from {filepath}')
         return entries
 
     # -- Deduplication -----------------------------------------------------
@@ -317,9 +315,7 @@ class VisecaCsvImporter(
         if existing:
             by_id = {}
             for entry in data.filter_txns(existing):
-                transaction_id = (
-                    entry.meta.get(META_TRANSACTION_ID) if entry.meta else None
-                )
+                transaction_id = entry.meta.get(META_TRANSACTION_ID) if entry.meta else None
                 if transaction_id:
                     by_id.setdefault(transaction_id, entry)
 
@@ -346,18 +342,14 @@ class VisecaCsvImporter(
         try:
             return list(self.read(filepath))
         except OSError as exc:
-            raise VisecaCsvError(
-                f"{filepath}: cannot be read ({exc.strerror})"
-            ) from None
+            raise VisecaCsvError(f'{filepath}: cannot be read ({exc.strerror})') from None
         except UnicodeDecodeError:
-            raise VisecaCsvError(
-                f"{filepath}: is not valid {self.encoding} text"
-            ) from None
+            raise VisecaCsvError(f'{filepath}: is not valid {self.encoding} text') from None
         except IndexError:
-            raise VisecaCsvError(f"{filepath}: contains no header row") from None
+            raise VisecaCsvError(f'{filepath}: contains no header row') from None
         except KeyError as exc:
-            detail = exc.args[0] if exc.args else "unknown column"
-            raise VisecaCsvError(f"{filepath}: unexpected header ({detail})") from None
+            detail = exc.args[0] if exc.args else 'unknown column'
+            raise VisecaCsvError(f'{filepath}: unexpected header ({detail})') from None
 
     def _validate_cards(self, rows: list, filepath: str) -> None:
         cards = set()
@@ -371,9 +363,9 @@ class VisecaCsvImporter(
 
         if len(cards) > 1 and not self.card_accounts:
             raise VisecaCsvError(
-                f"{filepath}: covers {len(cards)} cards but no card_accounts "
-                f"mapping is configured; add one mapping each CardId to its "
-                f"liability account"
+                f'{filepath}: covers {len(cards)} cards but no card_accounts '
+                f'mapping is configured; add one mapping each CardId to its '
+                f'liability account'
             )
 
     # -- Row handling ------------------------------------------------------
@@ -399,9 +391,9 @@ class VisecaCsvImporter(
             return RowKind.PAYMENT
         if not card:
             logger.warning(
-                f"{filepath}:{lineno}: negative row has no CardId but names "
-                f"merchant {merchant!r}; treating it as a refund rather than a "
-                f"bill payment"
+                f'{filepath}:{lineno}: negative row has no CardId but names '
+                f'merchant {merchant!r}; treating it as a refund rather than a '
+                f'bill payment'
             )
         return RowKind.REFUND
 
@@ -410,8 +402,8 @@ class VisecaCsvImporter(
         value, exact = _narrow_to_cents(raw_amount)
         if not exact:
             logger.warning(
-                f"{filepath}:{lineno}: amount {raw_amount} does not fit two "
-                f"decimals; keeping full precision"
+                f'{filepath}:{lineno}: amount {raw_amount} does not fit two '
+                f'decimals; keeping full precision'
             )
 
         currency = _text(row.currency) or DEFAULT_CURRENCY
@@ -444,9 +436,7 @@ class VisecaCsvImporter(
             )
 
         return data.Transaction(
-            meta=data.new_metadata(
-                filepath, lineno, self._metadata(row, currency, raw_amount)
-            ),
+            meta=data.new_metadata(filepath, lineno, self._metadata(row, currency, raw_amount)),
             date=row.txn_date,
             flag=self._flag(kind, row, currency),
             payee=merchant or None,
@@ -478,16 +468,14 @@ class VisecaCsvImporter(
             return self.card_accounts[card]
         except KeyError:
             raise VisecaCsvError(
-                f"{filepath}: CardId {card!r} is not in card_accounts; add it "
-                f"to the importer configuration"
+                f'{filepath}: CardId {card!r} is not in card_accounts; add it '
+                f'to the importer configuration'
             ) from None
 
     def _flag(self, kind: RowKind, row, currency: str) -> str:
-        if self.flag_unverified and (
-            kind is RowKind.REFUND or self._is_foreign(row, currency)
-        ):
-            return "!"
-        return "*"
+        if self.flag_unverified and (kind is RowKind.REFUND or self._is_foreign(row, currency)):
+            return '!'
+        return '*'
 
     @staticmethod
     def _is_foreign(row, currency: str) -> bool:
@@ -539,27 +527,23 @@ class VisecaCsvImporter(
         exc: Exception | None = None,
     ) -> None:
         skipped[reason] += 1
-        message = f"{filepath}:{lineno}: skipped, {reason.value}"
+        message = f'{filepath}:{lineno}: skipped, {reason.value}'
         if exc is not None:
-            message = f"{message} ({exc})"
+            message = f'{message} ({exc})'
         if reason is SkipReason.PENDING:
             logger.debug(message)
         else:
             logger.warning(message)
 
     @staticmethod
-    def _report_skipped(
-        filepath: str, total: int, skipped: collections.Counter
-    ) -> None:
+    def _report_skipped(filepath: str, total: int, skipped: collections.Counter) -> None:
         if not skipped:
             return
-        detail = ", ".join(
-            f"{count} {reason.value}"
+        detail = ', '.join(
+            f'{count} {reason.value}'
             for reason, count in sorted(skipped.items(), key=lambda item: item[0].value)
         )
-        logger.warning(
-            f"{filepath}: skipped {sum(skipped.values())} of {total} rows ({detail})"
-        )
+        logger.warning(f'{filepath}: skipped {sum(skipped.values())} of {total} rows ({detail})')
 
 
 _HEURISTIC_CMP = heuristic_comparator()

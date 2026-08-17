@@ -69,22 +69,22 @@ class BasicTransactionProcessor(ImporterProtocolAdapter):
         tx = TransactionInspector(transaction)
 
         # Example 1: Standardize food delivery service names
-        if tx.hasPayee("Uber eats"):
-            tx.replacePayee("Uber Eats").simplePosting("Expenses:Food:Delivery")
+        if tx.hasPayee('Uber eats'):
+            tx.replacePayee('Uber Eats').simplePosting('Expenses:Food:Delivery')
 
-        elif tx.hasPayee("JustEat"):
-            tx.replacePayee("Just Eat").simplePosting("Expenses:Food:Delivery")
+        elif tx.hasPayee('JustEat'):
+            tx.replacePayee('Just Eat').simplePosting('Expenses:Food:Delivery')
 
         # Example 2: Categorize Swiss shopping
-        elif tx.hasPayee("Digitec Galaxus"):
-            tx.simplePosting("Expenses:Shopping:Electronics")
+        elif tx.hasPayee('Digitec Galaxus'):
+            tx.simplePosting('Expenses:Shopping:Electronics')
 
-        elif tx.hasPayee("Migros") or tx.hasPayee("Coop"):
-            tx.simplePosting("Expenses:Food:Groceries")
+        elif tx.hasPayee('Migros') or tx.hasPayee('Coop'):
+            tx.simplePosting('Expenses:Food:Groceries')
 
         # Example 3: Handle Swiss salary deposits
-        elif tx.hasPayee("UBS") and tx.isCredit():
-            tx.replacePayee("UBS Switzerland AG").simplePosting("Income:Salary")
+        elif tx.hasPayee('UBS') and tx.isCredit():
+            tx.replacePayee('UBS Switzerland AG').simplePosting('Income:Salary')
 
         # Example 4: Flag large transactions for review
         if tx.hasFirstPostingWithLessThan(-1000):  # Expenses > CHF 1000

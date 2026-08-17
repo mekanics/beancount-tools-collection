@@ -12,28 +12,25 @@ class FireFlyImporter(Importer):
     """An importer for firefly-iii exports."""
 
     def identify(self, f):
-        if "firefly" in f.name:
-            return True
-
-        return False
+        return 'firefly' in f.name
 
     def extract(self, filepath, existing=None):
-        entries = dict()
+        entries = {}
 
         with StringIO(filepath.contents()) as csvfile:
             reader = csv.DictReader(
                 csvfile,
-                delimiter=",",
+                delimiter=',',
                 skipinitialspace=True,
             )
 
             for row in reader:
                 try:
-                    amount_raw = D(row["amount"].strip())
-                    amt = amount.Amount(amount_raw, row["currency_code"])
+                    amount_raw = D(row['amount'].strip())
+                    amt = amount.Amount(amount_raw, row['currency_code'])
 
-                    book_date = parse(row["date"].strip()).date()
-                    tx_id = D(row["group_id"])
+                    book_date = parse(row['date'].strip()).date()
+                    tx_id = D(row['group_id'])
                 except Exception as e:
                     logging.warning(e)
                     continue
@@ -54,14 +51,14 @@ class FireFlyImporter(Importer):
                     #         filter(None, (entries[tx_id].narration, tx_narration))
                     #     )
                     # )
-                    print("TODO")
+                    print('TODO')
                 else:
                     entry = data.Transaction(
                         data.new_metadata(filepath, 0, {}),
                         book_date,
-                        "*",
-                        "",
-                        row["Description"].strip(),
+                        '*',
+                        '',
+                        row['Description'].strip(),
                         data.EMPTY_SET,
                         data.EMPTY_SET,
                         [

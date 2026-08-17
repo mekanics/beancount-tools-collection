@@ -3,7 +3,7 @@
 🧮 My personal collection of beancount tools including importers, price fetchers, plugins, and utilities for various financial institutions.
 
 [![CI](https://github.com/mekanics/beancount-tools-collection/actions/workflows/ci.yml/badge.svg)](https://github.com/mekanics/beancount-tools-collection/actions/workflows/ci.yml)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub issues](https://img.shields.io/github/issues/mekanics/beancount-tools-collection)](https://github.com/mekanics/beancount-tools-collection/issues)
 
@@ -52,11 +52,12 @@ pip install beancount-tools-collection
 ```bash
 git clone https://github.com/mekanics/beancount-tools-collection.git
 cd beancount-tools-collection
-uv sync --extra dev
+make install
 uv run pre-commit install
 ```
 
-This installs Ruff + pre-commit hooks so `ruff check --fix` and `ruff format` run on every `git commit` (same Ruff binary as CI, from `uv.lock`).
+`make install` syncs the lockfile into `.venv`. The pre-commit hooks format
+staged files; `pre-push` runs `make check` (the same gate CI uses).
 
 ## Quick Start
 
@@ -76,47 +77,45 @@ from beancount_tools_collection.importers import (
 CONFIG = [
     # Swiss institutions
     finpension.FinpensionImporter(
-        root_account="Assets:Pension:S3:Finpension:Portfolio1",
-        deposit_account="Assets:Checking",
+        root_account='Assets:Pension:S3:Finpension:Portfolio1',
+        deposit_account='Assets:Checking',
         isin_lookup={
-            "CH0132501898": "CH0132501898",  # Example ISIN mapping
+            'CH0132501898': 'CH0132501898',  # Example ISIN mapping
             # ... more ISINs
         },
     ),
     viac.ViacImporter(
-        root_account="Assets:Pension:S3a:Viac:Portfolio1",
-        deposit_account="Assets:Checking",
+        root_account='Assets:Pension:S3a:Viac:Portfolio1',
+        deposit_account='Assets:Checking',
         share_lookup={
-            "UBS SMI": {"isin": "CH0033782431", "symbol": "CH0033782431"},
+            'UBS SMI': {'isin': 'CH0033782431', 'symbol': 'CH0033782431'},
             # ... more share mappings
         },
     ),
-    yuh.YuhImporter(
-        account="Assets:Cash:Yuh:CHF", goals_base_account="Assets:Savings:Yuh"
-    ),
+    yuh.YuhImporter(account='Assets:Cash:Yuh:CHF', goals_base_account='Assets:Savings:Yuh'),
     viseca_csv.VisecaCsvImporter(
-        account="Liabilities:CreditCard:Viseca",
+        account='Liabilities:CreditCard:Viseca',
         # The monthly "Ihre Zahlung - Danke" row settles the previous bill.
         # Point it at the account you pay from and the liability returns to
         # zero each cycle, so a dropped transaction shows up as a balance error.
-        settlement_account="Assets:Cash:Yuh:CHF",
+        settlement_account='Assets:Cash:Yuh:CHF',
         # Optional. Unmapped merchants stay single-legged on purpose.
         merchant_map={
-            "Coop": "Expenses:Groceries",
-            "Migros": "Expenses:Groceries",
-            "SBB CFF FFS": "Expenses:Transport",
+            'Coop': 'Expenses:Groceries',
+            'Migros': 'Expenses:Groceries',
+            'SBB CFF FFS': 'Expenses:Transport',
         },
     ),
     # International institutions
     ibkr.IBKRImporter(
-        Mainaccount="Assets:Invest:InteractiveBrokers",
-        DivAccount="Income:Dividends:InteractiveBrokers",
-        WHTAccount="Expenses:Taxes:WithholdingTax",
-        PnLAccount="Income:Invest:Gains",
-        FeesAccount="Expenses:Invest:Fees",
-        configFile="ibkr.yaml",  # Your IBKR FlexQuery config
+        Mainaccount='Assets:Invest:InteractiveBrokers',
+        DivAccount='Income:Dividends:InteractiveBrokers',
+        WHTAccount='Expenses:Taxes:WithholdingTax',
+        PnLAccount='Income:Invest:Gains',
+        FeesAccount='Expenses:Invest:Fees',
+        configFile='ibkr.yaml',  # Your IBKR FlexQuery config
     ),
-    revolut.RevolutImporter("revolut_chf", "Assets:Cash:Revolut:CHF", "CHF"),
+    revolut.RevolutImporter('revolut_chf', 'Assets:Cash:Revolut:CHF', 'CHF'),
 ]
 ```
 
@@ -242,6 +241,23 @@ IBKR Flex fetch and credential failures (expired/invalid token, bad `ibkr.yaml`,
 
 Exception messages, log lines, and raised tracebacks redact the Flex token (and do not chain secret-bearing upstream exceptions). If older logs were shared while a token was still live, rotate the token under Reports > Flex Web Service.
 
+### Publishing to PyPI
+
+Requires Python 3.11+. Bump the version, commit, then push a matching tag:
+
+```bash
+uv version --bump minor   # or patch / major
+git add pyproject.toml uv.lock
+git commit -m "Release 1.3.0"
+git tag v1.3.0
+git push origin main --tags
+```
+
+The tag must equal `v` plus the version in `pyproject.toml`. A mismatch fails
+before any PyPI contact. That tag push is the only publish trigger: the
+Release workflow tests, uploads to PyPI, then creates the matching GitHub
+Release. Creating or editing a Release in the GitHub UI does not upload again.
+
 ## Contributing
 
 We welcome contributions! Here's how you can help:
@@ -254,24 +270,19 @@ We welcome contributions! Here's how you can help:
 
 ### Development Setup
 
-Same as [From Source](#from-source): `uv sync --extra dev` and
-`uv run pre-commit install`. That installs Ruff and the pre-commit hooks that
-run `ruff check --fix` and `ruff format` on every commit.
-
-### Running Tests
+Same as [From Source](#from-source): `make install` and
+`uv run pre-commit install`.
 
 ```bash
-uv run pytest
+make check    # lint, format check, lockfile
+make format   # rewrite the tree
+make test     # pytest with a 30% coverage ratchet
+make build    # sdist + wheel, no local path sources
+make audit    # zizmor over the workflows
 ```
 
-### Code Formatting
-
-```bash
-uv run ruff check --fix
-uv run ruff format
-```
-
-Ruff replaced Black, isort, and flake8. The same commands run in CI.
+CI and `pre-push` call these targets. Do not invoke Ruff directly if you
+want the same result as the pipeline.
 
 ## License
 
