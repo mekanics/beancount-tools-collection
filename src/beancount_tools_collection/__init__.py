@@ -5,10 +5,15 @@ A comprehensive collection of beancount tools including importers, price fetcher
 plugins, and utilities for financial institutions worldwide.
 """
 
-__version__ = '1.1.0'
-__author__ = 'Beancount Tools Collection Contributors'
+from importlib.metadata import PackageNotFoundError, version
 
-# Make main modules easily accessible
 from . import importers, plugins, prices, scripts, utils
+
+try:
+    __version__ = version('beancount-tools-collection')
+except PackageNotFoundError:  # source checkout, not installed
+    __version__ = '0+unknown'
+
+__author__ = 'Beancount Tools Collection Contributors'
 
 __all__ = ['importers', 'prices', 'plugins', 'scripts', 'utils']
