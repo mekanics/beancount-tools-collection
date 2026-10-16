@@ -139,7 +139,7 @@ def test_sell_without_closed_lots_reduces_position(extract):
     assert posting.cost.date is None
     assert posting.price == amount.Amount(Decimal('212.35'), 'USD')
     assert sell.meta['lot_source'] == 'ledger_booking'
-    assert sell.meta['ibkr_cost'] == amount.Amount(Decimal('1203.44'), 'USD')
+    assert sell.meta['ibkr_cost'] == '1203.44 USD'
     assert sell.flag == '*'
 
 

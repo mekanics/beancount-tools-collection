@@ -208,7 +208,8 @@ class IBKRImporter(Importer):
       IBKR's lot price includes the buy commission, so it is never written as the cost.
     - Without them, -8 ACME {} @ price; the ledger's booking method picks the lots.
     - Metadata lot_source is 'ibkr_closed_lots', 'ledger_booking' or 'manual';
-      ibkr_cost is IBKR's cost basis (buy commissions included) for comparison.
+      ibkr_cost is a string, e.g. "1203.44 USD" (buy commissions included).
+      An Amount here shows up in Fava as "Unsupported metadata value".
     - Flagged '!' when closed lots don't cover the sell, and for cancelled sells.
     - suppressClosedLotPrice is ignored: no lot price is written any more.
 
@@ -1216,7 +1217,9 @@ class IBKRImporter(Importer):
 
             meta = {'lot_source': lot_source}
             if not pd.isna(row.get('cost')):
-                meta['ibkr_cost'] = amount.Amount(abs(row['cost']), currency)
+                # A string, not an Amount: Fava's metadata UI cannot render an
+                # Amount and shows "Unsupported metadata value" instead.
+                meta['ibkr_cost'] = f'{abs(row["cost"])} {currency}'
 
             postings = (
                 [data.Posting(self.getLiquidityAccount(currency), proceeds, None, None, None, None)]
