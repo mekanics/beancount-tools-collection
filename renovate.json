@@ -3,7 +3,12 @@
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
   "packageRules": [
     { "matchManagers": ["github-actions"], "minimumReleaseAge": "7 days" },
-    { "matchManagers": ["pep621"], "minimumReleaseAge": "3 days" }
+    { "matchManagers": ["pep621"], "minimumReleaseAge": "3 days" },
+    {
+      "description": "Digest and lockfile updates have no releaseTimestamp, so renovate/stability-days stays pending (renovatebot/renovate#45236).",
+      "matchUpdateTypes": ["digest", "pinDigest", "lockFileMaintenance"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    }
   ],
   "lockFileMaintenance": { "enabled": true, "schedule": ["before 5am on monday"] }
 }
