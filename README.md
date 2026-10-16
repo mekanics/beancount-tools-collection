@@ -122,19 +122,9 @@ CONFIG = [
 ### Automatic Categorization
 
 The Viseca CSV export carries no category, so `VisecaCsvImporter` emits
-single-legged postings and leaves the expense account to you. Anything not in
-`merchant_map` is left incomplete on purpose, which is exactly what
-[smart_importer](https://github.com/beancount/smart_importer) needs — it fills
-in postings left open and will not touch one that already names an account:
-
-```python
-from smart_importer import PredictPayees, PredictPostings
-
-HOOKS = [PredictPostings().hook, PredictPayees().hook]
-```
-
-Fava passes your existing entries automatically; on the CLI use
-`extract -e existing.beancount` so there is something to learn from.
+single-legged postings and leaves the expense account to you. Merchants in
+`merchant_map` get a balanced expense leg; anything else stays incomplete
+for you to fill in Fava.
 
 ### Price Fetcher Configuration
 
@@ -240,6 +230,25 @@ A few behaviours worth knowing:
 - **Entries carry `transactionId`**, the same metadata key the JSON importer
   writes, so re-imports and overlapping bills deduplicate exactly rather than
   heuristically.
+
+### Interactive Brokers sells
+
+Enable **Execution** and **Closed Lots** in the Trades section of your Flex
+query. Each sell then closes the lots IBKR closed, matched by open date
+(`-3 ACME {2022-09-14} @ 212.35 USD`). This works with Beancount's default
+booking method.
+
+IBKR's closed-lot price includes the buy commission, while the importer books
+buys at the execution price and the commission as a fee. That's why sells never
+write a lot price, and why the profit Beancount computes differs from IBKR's by
+the original buy commission. IBKR's own cost basis is kept as `ibkr_cost`
+metadata for comparison.
+
+Without Closed Lots, a sell posts `-8 ACME {}` and your ledger's booking method
+picks the lots. With several lots of one stock that needs
+`option "booking_method" "FIFO"`; the default STRICT method reports an
+"Ambiguous matches" error. Sells whose closed lots don't add up, and cancelled
+sells, are flagged `!` for review.
 
 ### Interactive Brokers errors (v1.1.0+)
 

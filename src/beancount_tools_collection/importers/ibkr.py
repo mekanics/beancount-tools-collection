@@ -18,7 +18,9 @@ To obtain these credentials:
 1. Log into your Interactive Brokers account
 2. Go to Reports > Flex Queries
 3. Create a new FlexQuery or use an existing one
-4. The FlexQuery must include: CashReport, Trades, CashTransactions, and CorporateActions
+4. The FlexQuery must include: CashReport, Trades, CashTransactions, and CorporateActions.
+   In Trades, enable both "Execution" and "Closed Lots" so sells close the right lots
+   (without Closed Lots the ledger needs option "booking_method" "FIFO").
 5. Generate a token for the FlexQuery - this becomes your 'token' value
 6. Note the Query ID - this becomes your 'queryId' value
 """
@@ -200,6 +202,15 @@ class IBKRImporter(Importer):
 
       GnuCash-style (stockAccountType="Investment", cashAccountType="Current"):
       - Mainaccount="Assets:Investment:IB" -> Cash account: "Assets:Current:IB"
+
+    Sells:
+    - With Closed Lots in the export, one posting per open date: -3 ACME {2022-09-14} @ 212.35 USD.
+      IBKR's lot price includes the buy commission, so it is never written as the cost.
+    - Without them, -8 ACME {} @ price; the ledger's booking method picks the lots.
+    - Metadata lot_source is 'ibkr_closed_lots', 'ledger_booking' or 'manual';
+      ibkr_cost is IBKR's cost basis (buy commissions included) for comparison.
+    - Flagged '!' when closed lots don't cover the sell, and for cancelled sells.
+    - suppressClosedLotPrice is ignored: no lot price is written any more.
 
     Corporate Actions:
     - Forward stock splits (FS): Additional shares are added with zero cost basis
@@ -1055,12 +1066,88 @@ class IBKRImporter(Importer):
                 stocktrades['buySell'] == BuySell.CANCELSELL
             )
         ]  # and the cancellation transactions to keep balance
-        # closed lots; keep index to match with sales
-        lots = stocks[stocks['levelOfDetail'] == 'CLOSED_LOT']
-
-        stockTransactions = self.Panic(sale, lots) + self.Shopping(buy)
+        stockTransactions = self.Panic(sale, stocks) + self.Shopping(buy)
 
         return stockTransactions
+
+    def _commission_postings(self, row):
+        """Cash and fees legs for a trade's commission; none when it rounds to zero."""
+        currency = row['ibCommissionCurrency']
+        commission = amount.Amount(row['ibCommission'].__round__(2), currency)
+        if commission.number == 0:
+            return []
+        return [
+            data.Posting(self.getLiquidityAccount(currency), commission, None, None, None, None),
+            data.Posting(self.getFeesAccount(currency), minus(commission), None, None, None, None),
+        ]
+
+    def _closed_lots_by_execution(self, stocks):
+        """Map each EXECUTION row's index to the CLOSED_LOT rows that directly follow it.
+
+        IBKR writes the lots a sell closed right after its execution row, and
+        ibflex keeps document order.
+        """
+        groups = {}
+        current = None
+        for idx, row in stocks.iterrows():
+            if row['levelOfDetail'] == 'EXECUTION':
+                current = idx
+                groups[current] = []
+            elif (
+                row['levelOfDetail'] == 'CLOSED_LOT'
+                and current is not None
+                and row['symbol'] == stocks.at[current, 'symbol']
+            ):
+                groups[current].append(idx)
+            else:
+                current = None
+        return {idx: stocks.loc[rows] for idx, rows in groups.items() if rows}
+
+    def _sell_lot_postings(self, row, lots):
+        """Asset postings that reduce the position for one sell execution.
+
+        Returns (postings, lot_source, needs_review). The cost spec never carries
+        a price: IBKR's lot price includes the buy commission, the ledger's lots
+        don't. With IBKR's closed lots, lots are matched by open date; without
+        them, an empty cost spec leaves the choice to the ledger's booking method.
+        """
+        symbol = row['symbol']
+        account = self.getAssetAccount(symbol)
+        price = amount.Amount(row['tradePrice'], row['currency'])
+        sold = -row['quantity']
+
+        def reduce(units, open_date):
+            cost = position.CostSpec(
+                number_per=None,
+                number_total=None,
+                currency=None,
+                date=open_date,
+                label=None,
+                merge=False,
+            )
+            return data.Posting(account, amount.Amount(-units, symbol), cost, price, None, None)
+
+        if lots is None:
+            return [reduce(sold, None)], 'ledger_booking', False
+
+        usable = (
+            'openDateTime' in lots
+            and not lots['openDateTime'].isna().any()
+            and sum(lots['quantity']) == sold
+        )
+        if not usable:
+            logger.warning(
+                f'Closed lots for {symbol} sell on {row["tradeDate"]} do not cover '
+                f'{sold} units with open dates; leaving lot choice to the ledger'
+            )
+            return [reduce(sold, None)], 'ledger_booking', True
+
+        units_by_date = {}
+        for _, lot in lots.iterrows():
+            open_date = lot['openDateTime'].date()
+            units_by_date[open_date] = units_by_date.get(open_date, 0) + lot['quantity']
+        postings = [reduce(units, open_date) for open_date, units in units_by_date.items()]
+        return postings, 'ibkr_closed_lots', False
 
     def Shopping(self, buy):
         # let's go shopping!!
@@ -1069,15 +1156,11 @@ class IBKRImporter(Importer):
         for _idx, row in buy.iterrows():
             # continue # debugging
             currency = row['currency']
-            currency_IBcommision = row['ibCommissionCurrency']
             symbol = row['symbol']
             proceeds = amount.Amount(row['proceeds'].__round__(2), currency)
-            commission = amount.Amount((row['ibCommission'].__round__(2)), currency_IBcommision)
             quantity = amount.Amount(row['quantity'], symbol)
             price = amount.Amount(row['tradePrice'], currency)
-            row['description']
 
-            D(row['tradePrice'])
             cost = position.CostSpec(
                 number_per=price.number,
                 number_total=None,
@@ -1090,23 +1173,7 @@ class IBKRImporter(Importer):
             postings = [
                 data.Posting(self.getAssetAccount(symbol), quantity, cost, None, None, None),
                 data.Posting(self.getLiquidityAccount(currency), proceeds, None, None, None, None),
-                data.Posting(
-                    self.getLiquidityAccount(currency_IBcommision),
-                    commission,
-                    None,
-                    None,
-                    None,
-                    None,
-                ),
-                data.Posting(
-                    self.getFeesAccount(currency_IBcommision),
-                    minus(commission),
-                    None,
-                    None,
-                    None,
-                    None,
-                ),
-            ]
+            ] + self._commission_postings(row)
 
             tags = (
                 frozenset({'drip'}) if Code.REINVESTMENT in row.get('notes', ()) else data.EMPTY_SET
@@ -1126,106 +1193,43 @@ class IBKRImporter(Importer):
             )
         return Shoppingbag
 
-    def Panic(self, sale, lots):
+    def Panic(self, sale, stocks):
         # OMG, IT is happening!!
 
+        closed_lots = self._closed_lots_by_execution(stocks)
         Doom = []
         for idx, row in sale.iterrows():
-            # continue # debugging
             currency = row['currency']
-            currency_IBcommision = row['ibCommissionCurrency']
             symbol = row['symbol']
             proceeds = amount.Amount(row['proceeds'].__round__(2), currency)
-            commission = amount.Amount((row['ibCommission'].__round__(2)), currency_IBcommision)
             quantity = amount.Amount(row['quantity'], symbol)
             price = amount.Amount(row['tradePrice'], currency)
-            row['description']
             date = row['dateTime'].date()
-            D(row['tradePrice'])
 
-            # Closed lot rows (potentially multiple) follow sell row
-            lotpostings = []
-            sum_lots_quantity = 0
-            # mylots: lots closed by sale 'row'
-            # symbol must match; begin at the row after the sell row
-            # we do not know the number of lot rows; stop iteration if quantity is enough
-            mylots = lots[(lots['symbol'] == row['symbol']) & (lots.index > idx)]
-            for _li, clo in mylots.iterrows():
-                sum_lots_quantity += clo['quantity']
-                if sum_lots_quantity > -row['quantity']:
-                    # oops, too many lots (warning issued below)
-                    break
-
-                cost = position.CostSpec(
-                    number_per=(
-                        Decimal(0) if self.suppressClosedLotPrice else round(clo['tradePrice'], 2)
-                    ),
-                    number_total=None,
-                    currency=clo['currency'],
-                    date=clo['openDateTime'].date(),
-                    label=None,
-                    merge=False,
+            if row['buySell'] == BuySell.CANCELSELL:
+                logger.warning(f'Cancelled {symbol} sell on {date} needs its lots restored by hand')
+                lotpostings, lot_source, needs_review = [], 'manual', True
+            else:
+                lotpostings, lot_source, needs_review = self._sell_lot_postings(
+                    row, closed_lots.get(idx)
                 )
 
-                lotpostings.append(
-                    data.Posting(
-                        self.getAssetAccount(symbol),
-                        amount.Amount(-clo['quantity'], clo['symbol']),
-                        cost,
-                        price,
-                        None,
-                        None,
-                    )
-                )
-
-                if sum_lots_quantity == -row['quantity']:
-                    # Exact match is expected:
-                    # all lots found for this sell transaction
-                    break
-
-            if sum_lots_quantity != -row['quantity']:
-                warnings.warn(f'Lots matching failure: sell index={idx}', stacklevel=2)
+            meta = {'lot_source': lot_source}
+            if not pd.isna(row.get('cost')):
+                meta['ibkr_cost'] = amount.Amount(abs(row['cost']), currency)
 
             postings = (
-                [
-                    # data.Posting(self.getAssetAccount(symbol),  # this first posting is probably wrong
-                    # quantity, None, price, None, None),
-                    data.Posting(
-                        self.getLiquidityAccount(currency),
-                        proceeds,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-                ]
+                [data.Posting(self.getLiquidityAccount(currency), proceeds, None, None, None, None)]
                 + lotpostings
-                + [
-                    data.Posting(self.getPNLAccount(symbol), None, None, None, None, None),
-                    data.Posting(
-                        self.getLiquidityAccount(currency_IBcommision),
-                        commission,
-                        None,
-                        None,
-                        None,
-                        None,
-                    ),
-                    data.Posting(
-                        self.getFeesAccount(currency_IBcommision),
-                        minus(commission),
-                        None,
-                        None,
-                        None,
-                        None,
-                    ),
-                ]
+                + [data.Posting(self.getPNLAccount(symbol), None, None, None, None, None)]
+                + self._commission_postings(row)
             )
 
             Doom.append(
                 data.Transaction(
-                    data.new_metadata('Buy', 0),
+                    data.new_metadata('Sell', 0, meta),
                     date,
-                    self.flag,
+                    '!' if needs_review else self.flag,
                     symbol,  # payee
                     ' '.join(['SELL', quantity.to_string(), '@', price.to_string()]),
                     data.EMPTY_SET,

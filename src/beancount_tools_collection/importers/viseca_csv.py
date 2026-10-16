@@ -2,10 +2,9 @@
 
 The Viseca One app exports a monthly bill as CSV. Unlike the JSON transaction
 export handled by :mod:`viseca`, the CSV carries no PFM category, so this
-importer emits single-legged postings and leaves the expense account to a
-categorization layer: an explicit ``merchant_map``, ``smart_importer``, or
-manual entry in Fava. ``smart_importer`` only fills postings that are left
-incomplete, so writing a placeholder expense account here would disable it.
+importer emits single-legged postings. An explicit ``merchant_map`` fills the
+expense account for known merchants; everything else stays incomplete for
+manual entry in Fava.
 
 The monthly "Ihre Zahlung - Danke" row settles the *previous* bill, not the one
 it appears on. It is emitted as a transfer against ``settlement_account`` so the
