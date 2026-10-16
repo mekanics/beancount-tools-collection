@@ -152,7 +152,7 @@ def test_identify_respects_filename_regex(tmp_path, name, regex, expected):
 def test_expense_is_single_legged(importer, tmp_path):
     entries = importer.extract(make_csv(tmp_path, {}))
     assert len(entries) == 1
-    # smart_importer only fills postings that are left incomplete.
+    # Unmapped merchants stay single-legged.
     assert len(entries[0].postings) == 1
     assert entries[0].postings[0].units is not None
 
