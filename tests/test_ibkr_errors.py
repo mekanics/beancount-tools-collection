@@ -19,11 +19,16 @@ from beancount_tools_collection.importers.ibkr import (
     IBKRConfigError,
     IBKRImporter,
     IBKRImportError,
+    IBKRLockoutError,
     IBKRStatementError,
     IBKRTemporaryError,
     _classify_response_code_error,
     _redact,
 )
+from beancount_tools_collection.utils.ibkr_flex import StatementTimeoutError
+
+# Codes in IBKR's current error table that ibflex 1.1 does not know.
+NEWER_IBKR_CODES = {'1001', '1025'}
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -73,18 +78,56 @@ def test_temporary_codes_raise_temporary_error(code):
     assert code in str(classified)
 
 
-def test_code_tables_partition_ibflex_error_codes():
-    covered = set(_PERMANENT_CODES) | set(_TEMPORARY_CODES)
-    assert covered == set(ERROR_CODES)
+def test_code_tables_are_disjoint():
     assert set(_PERMANENT_CODES).isdisjoint(_TEMPORARY_CODES)
 
 
+@pytest.mark.parametrize('code', sorted(set(ERROR_CODES) | NEWER_IBKR_CODES))
+def test_every_documented_ibkr_code_gets_a_specific_error(code):
+    classified = _classify_response_code_error(ResponseCodeError(code, 'msg'), '/p/ibkr.yaml')
+    assert type(classified) is not IBKRImportError
+    assert 'unexpected' not in str(classified)
+
+
+def test_lockout_code_tells_the_user_to_wait_and_how_to_recover():
+    err = ResponseCodeError('1025', 'Too many failed attempts. Please review your configuration.')
+    classified = _classify_response_code_error(err, '/ledger/ibkr.yaml')
+    msg = str(classified)
+    assert isinstance(classified, IBKRLockoutError)
+    assert isinstance(classified, IBKRTemporaryError)
+    assert '1025' in msg
+    assert '15 min' in msg
+    assert 'requests with this token for' in msg
+    assert 'command line' in msg
+    assert 'new Flex token' in msg
+    assert '/ledger/ibkr.yaml' in msg
+
+
+def test_query_level_pause_names_token_and_query():
+    classified = _classify_response_code_error(
+        ResponseCodeError('1014', 'Query is invalid.'), '/ledger/ibkr.yaml'
+    )
+    assert 'requests with this token and query for 5 min' in str(classified)
+
+
+def test_throttle_code_says_throttling_not_generating():
+    classified = _classify_response_code_error(
+        ResponseCodeError('1018', 'Too many requests have been made from this token.'),
+        '/ledger/ibkr.yaml',
+    )
+    msg = str(classified)
+    assert isinstance(classified, IBKRTemporaryError)
+    assert 'throttling' in msg
+    assert 'generating' not in msg
+
+
 def test_unknown_code_falls_back_to_base_import_error():
-    err = ResponseCodeError('9999', 'mysterious failure')
+    err = ResponseCodeError('9999', 'mysterious failure.')
     classified = _classify_response_code_error(err, '/path/ibkr.yaml')
     assert type(classified) is IBKRImportError
     assert '9999' in str(classified)
     assert 'mysterious failure' in str(classified)
+    assert '..' not in str(classified)
 
 
 def test_permanent_message_shape_includes_remediation():
@@ -122,7 +165,7 @@ def test_extract_1012_raises_config_error(importer, ibkr_yaml, monkeypatch):
     def boom(token, query_id):
         raise ResponseCodeError('1012', 'Token has expired.')
 
-    monkeypatch.setattr('beancount_tools_collection.importers.ibkr.client.download', boom)
+    monkeypatch.setattr('beancount_tools_collection.utils.ibkr_flex.download', boom)
     with pytest.raises(IBKRConfigError) as excinfo:
         importer.extract(ibkr_yaml)
     assert '1012' in str(excinfo.value)
@@ -134,10 +177,76 @@ def test_extract_1018_raises_temporary_error(importer, ibkr_yaml, monkeypatch):
     def boom(token, query_id):
         raise ResponseCodeError('1018', 'Too many requests have been made from this token.')
 
-    monkeypatch.setattr('beancount_tools_collection.importers.ibkr.client.download', boom)
+    monkeypatch.setattr('beancount_tools_collection.utils.ibkr_flex.download', boom)
     with pytest.raises(IBKRTemporaryError) as excinfo:
         importer.extract(ibkr_yaml)
     assert '1018' in str(excinfo.value)
+
+
+def test_extract_after_lockout_skips_ibkr_until_cooldown_ends(importer, ibkr_yaml, monkeypatch):
+    calls = []
+
+    def locked(token, query_id):
+        calls.append(query_id)
+        raise ResponseCodeError('1025', 'Too many failed attempts.')
+
+    monkeypatch.setattr('beancount_tools_collection.utils.ibkr_flex.download', locked)
+    with pytest.raises(IBKRLockoutError):
+        importer.extract(ibkr_yaml)
+
+    with pytest.raises(IBKRLockoutError) as excinfo:
+        importer.extract(ibkr_yaml)
+    msg = str(excinfo.value)
+    assert len(calls) == 1
+    assert msg.startswith('IBKR import skipped:')
+    assert '1025' in msg
+    assert '15 min' in msg
+    assert 'requests with this token stay paused' in msg
+    assert 'restart Fava' in msg
+    assert 'SECRETTOKEN123' not in msg
+
+
+def test_extract_after_rejected_token_skips_ibkr_with_config_error(
+    importer, ibkr_yaml, monkeypatch
+):
+    calls = []
+
+    def expired(token, query_id):
+        calls.append(query_id)
+        raise ResponseCodeError('1012', 'Token has expired.')
+
+    monkeypatch.setattr('beancount_tools_collection.utils.ibkr_flex.download', expired)
+    with pytest.raises(IBKRConfigError):
+        importer.extract(ibkr_yaml)
+    with pytest.raises(IBKRConfigError) as excinfo:
+        importer.extract(ibkr_yaml)
+    assert len(calls) == 1
+    assert 'expired' in str(excinfo.value).lower()
+    assert '5 min' in str(excinfo.value)
+
+
+def test_extract_statement_timeout_raises_temporary_error(importer, ibkr_yaml, monkeypatch):
+    def slow(token, query_id):
+        raise StatementTimeoutError('IBKR did not finish the statement within 300 s (code 1019)')
+
+    monkeypatch.setattr('beancount_tools_collection.utils.ibkr_flex.download', slow)
+    with pytest.raises(IBKRTemporaryError) as excinfo:
+        importer.extract(ibkr_yaml)
+    assert '300 s' in str(excinfo.value)
+    assert ibkr_yaml in str(excinfo.value)
+
+
+def test_extract_reuses_a_fresh_statement(importer, ibkr_yaml, monkeypatch):
+    calls = []
+
+    def ok(token, query_id):
+        calls.append(query_id)
+        return b'<FlexQueryResponse queryName="q" type="AF"><FlexStatements count="0"/></FlexQueryResponse>'
+
+    monkeypatch.setattr('beancount_tools_collection.utils.ibkr_flex.download', ok)
+    assert importer.extract(ibkr_yaml) == []
+    assert importer.extract(ibkr_yaml) == []
+    assert len(calls) == 1
 
 
 def _format_exception_chain(exc: BaseException) -> str:
@@ -158,7 +267,7 @@ def test_token_never_leaks_in_exception_or_logs(importer, ibkr_yaml, monkeypatch
             f'?v=3&t={tok}&q=999'
         )
 
-    monkeypatch.setattr('beancount_tools_collection.importers.ibkr.client.download', boom)
+    monkeypatch.setattr('beancount_tools_collection.utils.ibkr_flex.download', boom)
 
     # Capture loguru output on stderr (default sink).
     from loguru import logger
@@ -193,7 +302,7 @@ def test_bad_response_traceback_excludes_body_and_token(importer, ibkr_yaml, mon
     def boom(tok, query_id):
         raise BadResponseError(response)
 
-    monkeypatch.setattr('beancount_tools_collection.importers.ibkr.client.download', boom)
+    monkeypatch.setattr('beancount_tools_collection.utils.ibkr_flex.download', boom)
     with pytest.raises(IBKRImportError) as excinfo:
         importer.extract(ibkr_yaml)
     err = excinfo.value
@@ -262,7 +371,7 @@ def test_empty_statement_still_returns_empty_list(importer, ibkr_yaml, monkeypat
 
 def test_flex_parser_error_raises_statement_error(importer, ibkr_yaml, monkeypatch):
     monkeypatch.setattr(
-        'beancount_tools_collection.importers.ibkr.client.download',
+        'beancount_tools_collection.utils.ibkr_flex.download',
         lambda token, query_id: b'<FlexQueryResponse/>',
     )
     monkeypatch.setattr(
@@ -282,7 +391,7 @@ def test_bad_response_error_excludes_body(importer, ibkr_yaml, monkeypatch):
     def boom(token, query_id):
         raise BadResponseError(response)
 
-    monkeypatch.setattr('beancount_tools_collection.importers.ibkr.client.download', boom)
+    monkeypatch.setattr('beancount_tools_collection.utils.ibkr_flex.download', boom)
     with pytest.raises(IBKRImportError) as excinfo:
         importer.extract(ibkr_yaml)
     msg = str(excinfo.value)
@@ -340,7 +449,7 @@ def test_fava_style_extract_failure_is_not_empty_list(importer, ibkr_yaml, monke
     def boom(token, query_id):
         raise ResponseCodeError('1012', 'Token has expired.')
 
-    monkeypatch.setattr('beancount_tools_collection.importers.ibkr.client.download', boom)
+    monkeypatch.setattr('beancount_tools_collection.utils.ibkr_flex.download', boom)
 
     try:
         entries = importer.extract(ibkr_yaml)

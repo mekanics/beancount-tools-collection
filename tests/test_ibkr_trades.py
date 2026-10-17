@@ -15,8 +15,9 @@ import yaml
 from beancount import loader
 from beancount.core import amount, data
 from beancount.parser import printer
+from ibflex.enums import Code
 
-from beancount_tools_collection.importers.ibkr import IBKRImporter
+from beancount_tools_collection.importers.ibkr import _IBKR_CODE_ALIASES, IBKRImporter
 
 SAMPLE_XML = (Path(__file__).parent / 'data' / 'ibkr_trades_sample.xml').read_text()
 
@@ -49,7 +50,7 @@ def extract(importer, tmp_path, monkeypatch):
 
     def run(xml):
         monkeypatch.setattr(
-            'beancount_tools_collection.importers.ibkr.client.download',
+            'beancount_tools_collection.utils.ibkr_flex.download',
             lambda token, query_id: xml.encode(),
         )
         return importer.extract(str(cfg))
@@ -300,3 +301,54 @@ def test_buys_open_lots_at_execution_price(extract):
 
     drip = txn(entries, 'BUY 0.8 WIDG @ 40.25 USD')
     assert drip.tags == frozenset({'drip'})
+
+
+# ---------------------------------------------------------------------------
+# Note codes: IBKR's RI (Recurring Investment) vs Ri (Reimbursement)
+# ---------------------------------------------------------------------------
+
+ACME_SELL_ORDER = '1000000001'
+WIDG_DRIP_ORDER = '1000000002'
+
+
+def with_notes(xml, order_id, notes):
+    return re.sub(rf'(ibOrderID="{order_id}"[^>]*notes=")[^"]*"', rf'\g<1>{notes}"', xml)
+
+
+@pytest.fixture
+def execution_notes(importer, monkeypatch):
+    def run(xml):
+        monkeypatch.setattr(
+            'beancount_tools_collection.utils.ibkr_flex.download',
+            lambda token, query_id: xml.encode(),
+        )
+        statement = importer._download_statement('SECRETTOKEN123', 999999, 'ibkr.yaml')
+        (flex_statement,) = statement.FlexStatements
+        return {
+            str(t.ibOrderID): t.notes
+            for t in flex_statement.Trades
+            if t.levelOfDetail == 'EXECUTION'
+        }
+
+    return run
+
+
+def test_every_note_code_alias_maps_to_a_code_ibflex_knows():
+    known = {c.value for c in Code}
+    for source, targets in _IBKR_CODE_ALIASES.items():
+        assert set(targets) <= known, f'{source} -> {targets}'
+
+
+def test_recurring_investment_note_is_not_read_as_reimbursement(execution_notes):
+    notes = execution_notes(with_notes(SAMPLE_XML, ACME_SELL_ORDER, 'RI;P'))
+    assert notes[ACME_SELL_ORDER] == (Code.INTERNAL, Code.PARTIAL)
+
+
+def test_reimbursement_note_is_kept(execution_notes):
+    notes = execution_notes(with_notes(SAMPLE_XML, ACME_SELL_ORDER, 'Ri'))
+    assert notes[ACME_SELL_ORDER] == (Code.REIMBURSEMENT,)
+
+
+def test_recurring_investment_buy_is_not_tagged_drip(extract):
+    entries = extract(with_notes(SAMPLE_XML, WIDG_DRIP_ORDER, 'RI'))
+    assert txn(entries, 'BUY 0.8 WIDG @ 40.25 USD').tags == frozenset()

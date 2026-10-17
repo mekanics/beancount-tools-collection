@@ -1,14 +1,17 @@
 """
 Live integration test for IBKRImporter against the real IBKR FlexQuery API.
 
-Requires a .env file in the project root with:
+Opt-in: every run sends real requests with your token, and failed ones count
+towards IBKR's "Too many failed attempts" block (code 1025). Requires a .env
+file in the project root with:
     IBKR_TOKEN=<token>
     IBKR_QUERY_ID=<query_id>
 
 Run with:
-    pytest tests/test_ibkr_live.py -v -s
+    IBKR_LIVE=1 pytest tests/test_ibkr_live.py -v -s
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -19,6 +22,7 @@ from beancount_tools_collection.importers.ibkr import (
     IBKRConfigError,
     IBKRImporter,
     IBKRImportError,
+    IBKRTemporaryError,
 )
 
 # ---------------------------------------------------------------------------
@@ -46,8 +50,8 @@ _token = _env.get('IBKR_TOKEN', '')
 _query_id = _env.get('IBKR_QUERY_ID', '')
 
 requires_credentials = pytest.mark.skipif(
-    not (_token and _query_id),
-    reason='.env missing IBKR_TOKEN / IBKR_QUERY_ID',
+    not (_token and _query_id and os.environ.get('IBKR_LIVE') == '1'),
+    reason='live IBKR tests are opt-in: set IBKR_LIVE=1 and IBKR_TOKEN / IBKR_QUERY_ID in .env',
 )
 
 # ---------------------------------------------------------------------------
@@ -85,6 +89,9 @@ def live_entries(importer, ibkr_yaml):
     except IBKRConfigError as e:
         # .env present but IBKR rejected the token/query — cannot run happy-path live tests.
         pytest.skip(f'IBKR credentials rejected by API: {e}')
+    except IBKRTemporaryError as e:
+        # Busy, throttled or blocked (1025): retrying from a test only adds failed attempts.
+        pytest.skip(f'IBKR is not serving this token right now: {e}')
     except IBKRImportError as e:
         # Credentials present but IBKR unreachable (sandbox/CI proxy, DNS, etc.).
         if 'network error' in str(e).lower() or 'Max retries' in str(e):
@@ -108,11 +115,12 @@ def test_identify(importer, ibkr_yaml):
 def test_invalid_token_raises_config_error(importer, tmp_path):
     """A deliberately invalid token must surface IBKRConfigError, not [].
 
-    IBKR may answer with 1015 (Token is invalid) or 1020 (unable to validate
-    request) for a bogus token; both are permanent config failures.
+    IBKR may answer with 1015 (Token is invalid), 1020 (unable to validate
+    request) or 1014 (Query is invalid); all are permanent config failures. The
+    query id is bogus too, so this failed attempt is not tied to the real query.
     """
     cfg = tmp_path / 'ibkr.yaml'
-    cfg.write_text(yaml.dump({'token': '0', 'queryId': int(_query_id)}))
+    cfg.write_text(yaml.dump({'token': '0', 'queryId': 1}))
     try:
         with pytest.raises(IBKRConfigError) as excinfo:
             importer.extract(str(cfg))
@@ -133,10 +141,11 @@ def test_invalid_token_raises_config_error(importer, tmp_path):
         )
         if transport:
             pytest.skip(f'IBKR API unreachable from this environment: {e}')
+        if isinstance(e, IBKRTemporaryError):
+            pytest.skip(f'IBKR is not serving requests from here right now: {e}')
         raise
     msg = str(excinfo.value)
-    assert '1015' in msg or '1020' in msg, msg
-    assert 'token' in msg.lower()
+    assert any(f'code {code}' in msg for code in ('1014', '1015', '1020')), msg
 
 
 @requires_credentials
@@ -156,7 +165,7 @@ def test_extract_entry_types(live_entries):
 
 @requires_credentials
 def test_no_unknown_note_codes_crash(live_entries):
-    """Importing must not crash due to unknown ibflex Code values (e.g. 'RI')."""
+    """Importing must not crash on note codes ibflex does not know."""
     # Reaching here means extract() succeeded without raising; the fixture
     # would have failed the session if an exception had propagated.
     assert live_entries is not None
