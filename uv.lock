@@ -70,7 +70,7 @@ requires-dist = [
     { name = "beancount", specifier = ">=3.1.0" },
     { name = "beangulp", specifier = ">=0.2.0" },
     { name = "beanquery", specifier = ">=0.2.0" },
-    { name = "ibflex", specifier = ">=0.15" },
+    { name = "ibflex", specifier = ">=1.1" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "pandas", specifier = ">=1.3.0" },
     { name = "python-dateutil", specifier = ">=2.8.0" },
@@ -368,9 +368,12 @@ wheels = [
 
 [[package]]
 name = "ibflex"
-version = "0.15"
+version = "1.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/32/e2/d15814fe915af8d8c6a03938d7d18279ecb2b32d2a6348160a1650d36078/ibflex-0.15.tar.gz", hash = "sha256:e1ab295ff8d615f1279287d6214752110c7faa9493fcffd7c5519e718d3004a7", size = 29979, upload-time = "2021-01-13T01:18:08.919Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4c/1a/86e095141d8a808f396c6f9303b785dd461e218f12149bf5a612f6e1d696/ibflex-1.1.tar.gz", hash = "sha256:3e5cac02cadcbd22ea46ae4ca306d67c274b7166f40119f5d7d7103a130d032a", size = 50257, upload-time = "2026-05-23T15:06:40.922Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/21/21d3ad7fce8a54c7468ea64729da019f2d93d631468e2412848373bd5d41/ibflex-1.1-py3-none-any.whl", hash = "sha256:c84e02dafcd17f70587777c2e2f00e3cc1e949e045790bf4fe562fb03dbef434", size = 30987, upload-time = "2026-05-23T15:06:39.352Z" },
+]
 
 [[package]]
 name = "identify"

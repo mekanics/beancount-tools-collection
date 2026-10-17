@@ -25,6 +25,7 @@ To obtain these credentials:
 6. Note the Query ID - this becomes your 'queryId' value
 """
 
+import math
 import pickle
 import re
 import warnings
@@ -38,25 +39,30 @@ from beancount.core import amount, data, position
 from beancount.core.number import D, Decimal
 from beangulp.exceptions import Error as BeangulpError
 from beangulp.importer import Importer
-from ibflex import Types, client, parser
+from ibflex import Types, parser
 from ibflex.client import BadResponseError, ResponseCodeError
 from ibflex.enums import BuySell, CashAction, Code
 from ibflex.parser import FlexParserError
 from loguru import logger
 
-# Maps IBKR note codes that are unknown to ibflex to their closest known equivalents.
-# ibflex's Code enum (v0.15) is incomplete; IBKR adds codes without notice. Entries here
-# are expanded before unknown codes are dropped so the import does not crash.
+from beancount_tools_collection.utils import ibkr_flex
+
+# Maps IBKR note codes to the ibflex Code values they should parse as. Aliases win over
+# ibflex's own values, so they also correct codes ibflex reads wrongly. IBKR adds codes
+# without notice; unknown ones are dropped so the import does not crash.
 # To add a new mapping: run with DEBUG logging, look for "Dropped unrecognised" warnings,
 # identify the code's meaning from IBKR docs, and add it below.
 #
-# Known gaps vs ibflex v0.15:
-#   RI  - Recurring Investment (IBKR auto-invest / DCA plan). Distinct from "R"
-#         (Dividend Reinvestment / DRIP). Mapped to ["I"] (Internal) as the closest
-#         available equivalent; must NOT map to "R" or it will be mis-tagged as #drip.
-#         Tracked upstream: https://github.com/csingley/ibflex (no PR yet).
+# Known gaps vs ibflex v1.1 (IBKR: Ri = Reimbursement, RI = Recurring Investment):
+#   RI  - Recurring Investment (IBKR auto-invest / DCA plan). ibflex 1.1 has no such
+#         code and reads "RI" as REIMBURSEMENT. Distinct from "R" (Dividend
+#         Reinvestment / DRIP). Mapped to ["I"] (Internal) as the closest available
+#         equivalent; must NOT map to "R" or it will be mis-tagged as #drip.
+#   Ri  - Reimbursement. ibflex 1.1 stores REIMBURSEMENT under "RI", so "Ri" is unknown.
+# Targets are written as Code members so they follow ibflex if it renames a value.
 _IBKR_CODE_ALIASES: dict[str, list[str]] = {
-    'RI': ['I'],
+    'RI': [Code.INTERNAL.value],
+    'Ri': [Code.REIMBURSEMENT.value],
 }
 
 
@@ -78,6 +84,10 @@ class IBKRConfigError(IBKRImportError):
 
 class IBKRTemporaryError(IBKRImportError):
     """IBKR is busy or throttling; the same request should work later."""
+
+
+class IBKRLockoutError(IBKRTemporaryError):
+    """IBKR blocked the token after too many failed attempts (code 1025)."""
 
 
 class IBKRStatementError(IBKRImportError):
@@ -112,6 +122,7 @@ _PERMANENT_CODES: dict[str, str] = {
 # Transient Flex API codes: the same request should succeed later.
 _TEMPORARY_CODES = frozenset(
     {
+        '1001',
         '1003',
         '1004',
         '1005',
@@ -145,22 +156,50 @@ def _redact(text: str, token: str) -> str:
 
 
 def _classify_response_code_error(error: ResponseCodeError, filepath: str) -> IBKRImportError:
-    """Map an IBKR Flex error code to one of our exceptions."""
+    """Map an IBKR Flex error code (or a cooldown after one) to one of our exceptions."""
     code = error.code
-    if code in _PERMANENT_CODES:
-        return IBKRConfigError(
-            f'IBKR import failed: {_PERMANENT_CODES[code]} (code {code}) in {filepath}'
+    ibkr_text = (error.msg or '').rstrip('.')
+    remedy = ''
+    if code == ibkr_flex.LOCKOUT_CODE:
+        cls = IBKRLockoutError
+        reason = (
+            f'IBKR has blocked Flex requests for this token after too many failed '
+            f'attempts (code {code})'
         )
-    if code in _TEMPORARY_CODES:
-        return IBKRTemporaryError(
-            f'IBKR import failed: IBKR is busy or still generating the '
-            f'statement (code {code}: {error.msg}) — retry in a minute. '
-            f'Config: {filepath}'
+        remedy = (
+            ' If IBKR still blocks it after that, generate a new Flex token under '
+            "Reports > Flex Web Service, leave 'Valid For IP Address' empty and update 'token'."
         )
-    return IBKRImportError(
-        f'IBKR import failed: unexpected Flex API error code {code}: '
-        f'{error.msg}. Config: {filepath}'
-    )
+    elif code in _PERMANENT_CODES:
+        cls, reason = IBKRConfigError, f'{_PERMANENT_CODES[code]} (code {code})'
+    elif code == ibkr_flex.THROTTLED_CODE:
+        cls = IBKRTemporaryError
+        reason = f'IBKR is throttling this token: too many requests (code {code})'
+    elif code in _TEMPORARY_CODES:
+        cls = IBKRTemporaryError
+        reason = (
+            f'IBKR is busy or still generating the statement '
+            f'(code {code}: {ibkr_text}) — retry in a minute'
+        )
+    else:
+        cls, reason = IBKRImportError, f'unexpected Flex API error code {code}: {ibkr_text}'
+
+    scope = 'this token' if code in ibkr_flex.TOKEN_WIDE_CODES else 'this token and query'
+    if isinstance(error, ibkr_flex.CooldownError):
+        minutes = math.ceil(error.remaining / 60)
+        return cls(
+            f'IBKR import skipped: {reason}. IBKR was not contacted: to avoid adding failed '
+            f'attempts, requests with {scope} stay paused for another {minutes} min '
+            f'(restart Fava to retry sooner).{remedy} Config: {filepath}'
+        )
+    pause = ''
+    if code in ibkr_flex.COOLDOWN_SECONDS:
+        minutes = ibkr_flex.COOLDOWN_SECONDS[code] // 60
+        pause = (
+            f' To avoid adding failed attempts, Fava pauses requests with {scope} for '
+            f'{minutes} min; from the command line, wait as long before importing again.'
+        )
+    return cls(f'IBKR import failed: {reason}.{pause}{remedy} Config: {filepath}')
 
 
 class IBKRImporter(Importer):
@@ -407,13 +446,13 @@ class IBKRImporter(Importer):
             return None, None, None
 
     def _sanitize_ibkr_xml(self, response):
-        """Strip note codes unknown to ibflex from raw IBKR XML bytes.
+        """Rewrite Trade.notes codes so ibflex parses them correctly or not at all.
 
-        IBKR occasionally introduces new Trade.notes codes (e.g. 'RI') that
-        are not yet in ibflex's Code enum, causing a FlexParserError before
-        any of our processing runs. This filters the notes attributes in-place
-        to only keep values ibflex can parse, so unknown codes are silently
-        dropped rather than crashing the entire import.
+        IBKR occasionally introduces new notes codes that are not yet in
+        ibflex's Code enum, causing a FlexParserError before any of our
+        processing runs. Codes in _IBKR_CODE_ALIASES are rewritten first;
+        remaining codes ibflex does not know are dropped with a warning rather
+        than crashing the entire import.
         """
         known_codes = {c.value for c in Code}
 
@@ -421,11 +460,11 @@ class IBKRImporter(Importer):
             raw = match.group(1).decode()
             expanded = []
             for c in raw.split(';'):
-                if c in known_codes:
-                    expanded.append(c)
-                elif c in _IBKR_CODE_ALIASES:
+                if c in _IBKR_CODE_ALIASES:
                     expanded.extend(_IBKR_CODE_ALIASES[c])
-                    logger.debug(f"Mapped unknown IBKR note code '{c}' -> {_IBKR_CODE_ALIASES[c]}")
+                    logger.debug(f"Mapped IBKR note code '{c}' -> {_IBKR_CODE_ALIASES[c]}")
+                elif c in known_codes:
+                    expanded.append(c)
                 elif c:
                     logger.warning(f"Dropped unrecognised IBKR note code: '{c}'")
             return b'notes="' + ';'.join(expanded).encode() + b'"'
@@ -469,18 +508,21 @@ class IBKRImporter(Importer):
         Raises:
             IBKRConfigError, IBKRTemporaryError, IBKRStatementError, IBKRImportError
         """
-        # Warning: queries sometimes take a few minutes until IB provides
-        # the data due to busy servers.
         try:
-            response = client.download(token, queryId)
+            response = ibkr_flex.fetch(token, queryId)
             response = self._sanitize_ibkr_xml(response)
             statement = parser.parse(response)
         except ResponseCodeError as e:
             # Safe to chain: ResponseCodeError messages are code + IBKR text only.
             classified = _classify_response_code_error(e, filepath)
             msg = _redact(str(classified), token)
-            logger.error(_redact(f'IBKR API responded with error code: {e}', token))
+            logger.error(msg)
             raise type(classified)(msg) from e
+        except ibkr_flex.StatementTimeoutError as e:
+            # Safe to chain: the message is a duration and IBKR's last code + text.
+            msg = f'IBKR import failed: {e} — try again later. Config: {filepath}'
+            logger.error(msg)
+            raise IBKRTemporaryError(msg) from e
         except FlexParserError as e:
             # Safe to chain: parser errors describe XML/enums, not the Flex token.
             msg = _redact(
