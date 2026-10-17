@@ -1,7 +1,7 @@
 """Offline tests for the IBKR Flex Web Service client.
 
-IBKR allows one request per second and ten per minute per token, and blocks the
-token (code 1025) after too many failed attempts. These tests drive the client
+IBKR allows one request per second and ten per minute per token, and blocks Flex
+requests (code 1025) after too many failed attempts. These tests drive the client
 against a scripted fake on a virtual clock and assert what IBKR would observe:
 when each request arrives, how many arrive, and what the caller gets back.
 """
@@ -33,7 +33,10 @@ def flex_error(code, message='IBKR says no.'):
     return flex_response('Fail', ErrorCode=code, ErrorMessage=message)
 
 
-ACCESS = flex_response('Success', ReferenceCode='42', Url='https://flex.test/GetStatement')
+LEGACY_STATEMENT_URL = (
+    'https://gdcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement'
+)
+ACCESS = flex_response('Success', ReferenceCode='42', Url=LEGACY_STATEMENT_URL)
 STATEMENT = (
     b'<FlexQueryResponse queryName="q" type="AF"><FlexStatements count="0"/></FlexQueryResponse>'
 )
@@ -51,6 +54,7 @@ class FakeIBKR:
         self.now = 0.0
         self.latency = latency
         self.requests = []
+        self.urls = []
         self._scripts = {'send': list(send), 'poll': list(poll)}
 
     def sleep(self, seconds):
@@ -62,6 +66,7 @@ class FakeIBKR:
     def get(self, url, params, headers, timeout):
         endpoint = 'send' if url.endswith('SendRequest') else 'poll'
         self.requests.append((self.now, endpoint))
+        self.urls.append(url)
         _, read_timeout = timeout
         if self.latency > read_timeout:
             self.now += read_timeout
@@ -99,6 +104,13 @@ def busiest_minute(times):
 def test_returns_statement_once_ibkr_has_generated_it():
     ibkr = FakeIBKR(poll=[flex_error('1019')] * 3 + [STATEMENT])
     assert ibkr.download() == STATEMENT
+
+
+def test_uses_the_documented_endpoints_not_the_url_in_ibkrs_answer():
+    ibkr = FakeIBKR(poll=[flex_error('1019'), STATEMENT])
+    ibkr.download()
+    flex = 'https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService'
+    assert ibkr.urls == [f'{flex}/SendRequest', f'{flex}/GetStatement', f'{flex}/GetStatement']
 
 
 def test_first_poll_waits_more_than_a_second_after_the_request():
@@ -281,27 +293,45 @@ def scripted(monkeypatch):
     return make
 
 
-def test_lockout_pauses_requests_for_this_token_and_query(scripted):
+def test_lockout_pauses_requests_for_an_hour(scripted):
     fetcher, clock, calls = scripted(
         ResponseCodeError('1025', 'Too many failed attempts.'), STATEMENT
     )
     with pytest.raises(ResponseCodeError):
         fetcher.fetch('tok', 123)
 
-    clock.now = 14 * 60
+    clock.now = 59 * 60
     with pytest.raises(CooldownError) as excinfo:
         fetcher.fetch('tok', 123)
     assert excinfo.value.code == '1025'
     assert excinfo.value.remaining == pytest.approx(60)
     assert len(calls) == 1
 
-    clock.now = 15 * 60
+    clock.now = 60 * 60
     assert fetcher.fetch('tok', 123) == STATEMENT
     assert len(calls) == 2
 
 
-def test_cooldown_does_not_block_a_new_token(scripted):
+def test_lockout_pause_also_covers_a_new_token_for_the_same_query(scripted):
     fetcher, _, calls = scripted(ResponseCodeError('1025', 'Too many failed attempts.'), STATEMENT)
+    with pytest.raises(ResponseCodeError):
+        fetcher.fetch('old-token', 123)
+    with pytest.raises(CooldownError) as excinfo:
+        fetcher.fetch('new-token', 123)
+    assert excinfo.value.code == '1025'
+    assert len(calls) == 1
+
+
+def test_lockout_pause_does_not_block_another_accounts_query(scripted):
+    fetcher, _, calls = scripted(ResponseCodeError('1025', 'Too many failed attempts.'), STATEMENT)
+    with pytest.raises(ResponseCodeError):
+        fetcher.fetch('tok-a', 1)
+    assert fetcher.fetch('tok-b', 2) == STATEMENT
+    assert len(calls) == 2
+
+
+def test_rejected_token_pause_does_not_block_its_replacement(scripted):
+    fetcher, _, calls = scripted(ResponseCodeError('1015', 'Token is invalid.'), STATEMENT)
     with pytest.raises(ResponseCodeError):
         fetcher.fetch('old-token', 123)
     assert fetcher.fetch('new-token', 123) == STATEMENT

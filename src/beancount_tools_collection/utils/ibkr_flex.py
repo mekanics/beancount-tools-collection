@@ -1,9 +1,10 @@
 """Client for IBKR's Flex Web Service that stays inside IBKR's request limits.
 
-IBKR allows one request per second and ten per minute per token, and blocks the
-token (code 1025, "Too many failed attempts") when a client keeps failing.
-ibflex's own download loop polls faster than that and re-sends without pause on
-HTTP errors, so only its response parsing is used here.
+IBKR allows one request per second and ten per minute per token, and blocks Flex
+requests (code 1025, "Too many failed attempts") when a client keeps failing; a
+new token does not lift that block. ibflex's own download loop polls faster than
+that, re-sends without pause on HTTP errors and polls a legacy host, so only its
+response parsing is used here.
 
 fetch() is what importers call: it adds a short statement cache and stops
 contacting IBKR for a while after answers that retrying cannot fix.
@@ -14,8 +15,6 @@ import time
 
 import requests
 from ibflex.client import (
-    REQUEST_URL,
-    STMT_URL,
     BadResponseError,
     IbflexClientError,
     ResponseCodeError,
@@ -24,6 +23,11 @@ from ibflex.client import (
     parse_stmt_response,
 )
 from loguru import logger
+
+FLEX_URL = 'https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService'
+REQUEST_URL = f'{FLEX_URL}/SendRequest'
+# IBKR's docs say to ignore the <Url> in the SendRequest answer: it names a legacy host.
+STATEMENT_URL = f'{FLEX_URL}/GetStatement'
 
 FIRST_POLL_DELAY = 5
 POLL_DELAY_STEP = 5
@@ -49,12 +53,14 @@ NOT_READY_CODES = frozenset(
 CACHE_TTL = 300
 # Seconds fetch() stops contacting IBKR after these codes, for the token and query.
 COOLDOWN_SECONDS = {
-    LOCKOUT_CODE: 15 * 60,
+    LOCKOUT_CODE: 60 * 60,
     THROTTLED_CODE: 60,
     **dict.fromkeys(('1010', '1011', '1012', '1013', '1014', '1015', '1016', '1020'), 5 * 60),
 }
 # Codes about the token or account rather than one query: the pause covers every query.
 TOKEN_WIDE_CODES = frozenset({LOCKOUT_CODE, THROTTLED_CODE, '1011', '1012', '1013', '1015'})
+# IBKR keeps answering these to a new token, so the pause also covers the query with any token.
+ANY_TOKEN_CODES = frozenset({LOCKOUT_CODE})
 
 
 class StatementTimeoutError(IbflexClientError):
@@ -62,7 +68,7 @@ class StatementTimeoutError(IbflexClientError):
 
 
 class CooldownError(ResponseCodeError):
-    """IBKR was not contacted: it answered `code` recently for this token and query."""
+    """IBKR was not contacted: it answered `code` recently for this token or query."""
 
     def __init__(self, code: str, msg: str, remaining: float):
         super().__init__(code, msg)
@@ -91,7 +97,7 @@ def download(
     last_answer = ''
     while clock() + delay <= deadline:
         sleep(delay)
-        response = request(access.Url or STMT_URL, access.ReferenceCode)
+        response = request(STATEMENT_URL, access.ReferenceCode)
         if b'<FlexQueryResponse' in response.content:
             return response.content
 
@@ -167,7 +173,8 @@ def _statement_error(response: requests.Response) -> StatementError:
 class StatementFetcher:
     """One download per token at a time, reusing recent statements and honouring pauses.
 
-    Pauses for TOKEN_WIDE_CODES cover every query of the token; others cover one query.
+    Pauses for TOKEN_WIDE_CODES cover every query of the token, pauses for ANY_TOKEN_CODES
+    the query with any token; others cover one query with one token.
     """
 
     def __init__(self, clock=time.monotonic):
@@ -189,7 +196,7 @@ class StatementFetcher:
             lock = self._locks.setdefault(token_key, threading.Lock())
         with lock:
             now = self._clock()
-            for key in ((token_key, None), query_key):
+            for key in ((token_key, None), (None, str(query_id)), query_key):
                 if key in self._cooldowns:
                     until, code, msg = self._cooldowns[key]
                     if now < until:
@@ -209,11 +216,21 @@ class StatementFetcher:
                 content = download(token, query_id)
             except ResponseCodeError as e:
                 if e.code in COOLDOWN_SECONDS:
-                    key = (token_key, None) if e.code in TOKEN_WIDE_CODES else query_key
-                    self._cooldowns[key] = (self._clock() + COOLDOWN_SECONDS[e.code], e.code, e.msg)
+                    pause = (self._clock() + COOLDOWN_SECONDS[e.code], e.code, e.msg)
+                    for key in _pause_keys(e.code, token_key, str(query_id)):
+                        self._cooldowns[key] = pause
                 raise
             self._statements[query_key] = (self._clock(), content)
             return content
+
+
+def _pause_keys(code: str, token: str, query: str) -> list[tuple[str | None, str | None]]:
+    if code not in TOKEN_WIDE_CODES:
+        return [(token, query)]
+    keys = [(token, None)]
+    if code in ANY_TOKEN_CODES:
+        keys.append((None, query))
+    return keys
 
 
 _fetcher = StatementFetcher()

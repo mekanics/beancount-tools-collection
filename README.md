@@ -256,16 +256,18 @@ IBKR Flex fetch and credential failures (expired/invalid token, bad `ibkr.yaml`,
 
 Exception messages, log lines, and raised tracebacks redact the Flex token (and do not chain secret-bearing upstream exceptions). If older logs were shared while a token was still live, rotate the token under Reports > Flex Web Service.
 
-IBKR allows one Flex request per second and ten per minute per token, and blocks a token that keeps failing with code 1025 ("Too many failed attempts"). The importer polls within those limits and gives up five minutes after it starts, slow or unanswered requests included. To stop repeated Extract clicks in Fava from adding failed attempts, it then leaves IBKR alone for a while:
+IBKR allows one Flex request per second and ten per minute per token, and blocks Flex requests that keep failing with code 1025 ("Too many failed attempts"). The importer polls within those limits and gives up five minutes after it starts, slow or unanswered requests included. To stop repeated Extract clicks in Fava from adding failed attempts, it then leaves IBKR alone for a while:
 
-| IBKR answer                                                                 | Pause  | Covers                   |
-| --------------------------------------------------------------------------- | ------ | ------------------------ |
-| 1025, too many failed attempts                                              | 15 min | every query of the token |
-| Inactive service, expired, invalid or IP-restricted token (1011–1013, 1015) | 5 min  | every query of the token |
-| Invalid query, account or request (1010, 1014, 1016, 1020)                  | 5 min  | that query               |
-| 1018, too many requests                                                     | 1 min  | every query of the token |
+| IBKR answer                                                                 | Pause  | Covers                                                  |
+| --------------------------------------------------------------------------- | ------ | ------------------------------------------------------- |
+| 1025, too many failed attempts                                              | 1 hour | that query with any token, and every query of the token |
+| Inactive service, expired, invalid or IP-restricted token (1011–1013, 1015) | 5 min  | every query of the token                                |
+| Invalid query, account or request (1010, 1014, 1016, 1020)                  | 5 min  | that query with that token                              |
+| 1018, too many requests                                                     | 1 min  | every query of the token                                |
 
-During a pause the import fails with "IBKR import skipped" and says how long is left. A new token is not affected; restarting Fava clears all pauses. Pauses only last as long as the Fava process: each command-line import starts fresh, so wait out the time the error message gives before running it again. A downloaded statement is reused for five minutes. If 1025 persists after the pause, generate a new Flex token and leave "Valid For IP Address" empty.
+During a pause the import fails with "IBKR import skipped" and says how long is left; restarting Fava clears all pauses. Pauses only last as long as the Fava process: each command-line import starts fresh, so wait out the time the error message gives before running it again. A downloaded statement is reused for five minutes. Error messages end with the token's last four characters, so you can check which token was sent.
+
+A new token does not lift a 1025 block, which is why that pause also covers the query with a new token. IBKR does not say how long the block lasts; users report up to a day. Stop importing, log in to Client Portal once, and contact IBKR if 1025 persists the next day.
 
 ### Publishing to PyPI
 
@@ -312,7 +314,7 @@ want the same result as the pipeline.
 
 `tests/test_ibkr_live.py` calls the real IBKR Flex API and is skipped unless you
 opt in with `IBKR_LIVE=1` and put `IBKR_TOKEN` / `IBKR_QUERY_ID` in `.env`.
-Failed live requests count towards IBKR's 1025 block on your token.
+Failed live requests count towards IBKR's 1025 block, which a new token does not lift.
 
 ## License
 

@@ -87,7 +87,10 @@ class IBKRTemporaryError(IBKRImportError):
 
 
 class IBKRLockoutError(IBKRTemporaryError):
-    """IBKR blocked the token after too many failed attempts (code 1025)."""
+    """IBKR blocked Flex requests after too many failed attempts (code 1025).
+
+    A new token does not lift the block.
+    """
 
 
 class IBKRStatementError(IBKRImportError):
@@ -155,6 +158,12 @@ def _redact(text: str, token: str) -> str:
     return text
 
 
+def _token_hint(token: str) -> str:
+    """', token ending in 1234' so users can tell which token was sent; '' for short tokens."""
+    token = str(token or '')
+    return f', token ending in {token[-4:]}' if len(token) >= 12 else ''
+
+
 def _classify_response_code_error(error: ResponseCodeError, filepath: str) -> IBKRImportError:
     """Map an IBKR Flex error code (or a cooldown after one) to one of our exceptions."""
     code = error.code
@@ -162,13 +171,11 @@ def _classify_response_code_error(error: ResponseCodeError, filepath: str) -> IB
     remedy = ''
     if code == ibkr_flex.LOCKOUT_CODE:
         cls = IBKRLockoutError
-        reason = (
-            f'IBKR has blocked Flex requests for this token after too many failed '
-            f'attempts (code {code})'
-        )
+        reason = f'IBKR is blocking Flex requests after too many failed attempts (code {code})'
         remedy = (
-            ' If IBKR still blocks it after that, generate a new Flex token under '
-            "Reports > Flex Web Service, leave 'Valid For IP Address' empty and update 'token'."
+            ' A new token does not lift this block, and IBKR does not say how long it lasts'
+            ' (users report up to a day): stop importing, log in to Client Portal once,'
+            ' and contact IBKR if 1025 persists the next day.'
         )
     elif code in _PERMANENT_CODES:
         cls, reason = IBKRConfigError, f'{_PERMANENT_CODES[code]} (code {code})'
@@ -184,19 +191,24 @@ def _classify_response_code_error(error: ResponseCodeError, filepath: str) -> IB
     else:
         cls, reason = IBKRImportError, f'unexpected Flex API error code {code}: {ibkr_text}'
 
-    scope = 'this token' if code in ibkr_flex.TOKEN_WIDE_CODES else 'this token and query'
+    if code in ibkr_flex.ANY_TOKEN_CODES:
+        scope = 'this query (with any token) and every query of this token'
+    elif code in ibkr_flex.TOKEN_WIDE_CODES:
+        scope = 'every query of this token'
+    else:
+        scope = 'this query with this token'
     if isinstance(error, ibkr_flex.CooldownError):
         minutes = math.ceil(error.remaining / 60)
         return cls(
             f'IBKR import skipped: {reason}. IBKR was not contacted: to avoid adding failed '
-            f'attempts, requests with {scope} stay paused for another {minutes} min '
+            f'attempts, requests for {scope} stay paused for another {minutes} min '
             f'(restart Fava to retry sooner).{remedy} Config: {filepath}'
         )
     pause = ''
     if code in ibkr_flex.COOLDOWN_SECONDS:
         minutes = ibkr_flex.COOLDOWN_SECONDS[code] // 60
         pause = (
-            f' To avoid adding failed attempts, Fava pauses requests with {scope} for '
+            f' To avoid adding failed attempts, Fava pauses requests for {scope} for '
             f'{minutes} min; from the command line, wait as long before importing again.'
         )
     return cls(f'IBKR import failed: {reason}.{pause}{remedy} Config: {filepath}')
@@ -515,7 +527,7 @@ class IBKRImporter(Importer):
         except ResponseCodeError as e:
             # Safe to chain: ResponseCodeError messages are code + IBKR text only.
             classified = _classify_response_code_error(e, filepath)
-            msg = _redact(str(classified), token)
+            msg = _redact(str(classified), token) + _token_hint(token)
             logger.error(msg)
             raise type(classified)(msg) from e
         except ibkr_flex.StatementTimeoutError as e:
