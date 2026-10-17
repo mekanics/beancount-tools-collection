@@ -24,6 +24,7 @@ from beancount_tools_collection.importers.ibkr import (
     IBKRTemporaryError,
     _classify_response_code_error,
     _redact,
+    _token_hint,
 )
 from beancount_tools_collection.utils.ibkr_flex import StatementTimeoutError
 
@@ -89,17 +90,19 @@ def test_every_documented_ibkr_code_gets_a_specific_error(code):
     assert 'unexpected' not in str(classified)
 
 
-def test_lockout_code_tells_the_user_to_wait_and_how_to_recover():
+def test_lockout_code_tells_the_user_to_wait_rather_than_change_token():
     err = ResponseCodeError('1025', 'Too many failed attempts. Please review your configuration.')
     classified = _classify_response_code_error(err, '/ledger/ibkr.yaml')
     msg = str(classified)
     assert isinstance(classified, IBKRLockoutError)
     assert isinstance(classified, IBKRTemporaryError)
     assert '1025' in msg
-    assert '15 min' in msg
-    assert 'requests with this token for' in msg
+    assert '60 min' in msg
+    assert 'this query (with any token) and every query of this token' in msg
     assert 'command line' in msg
-    assert 'new Flex token' in msg
+    assert 'A new token does not lift this block' in msg
+    assert 'Client Portal' in msg
+    assert 'generate a new' not in msg
     assert '/ledger/ibkr.yaml' in msg
 
 
@@ -107,7 +110,14 @@ def test_query_level_pause_names_token_and_query():
     classified = _classify_response_code_error(
         ResponseCodeError('1014', 'Query is invalid.'), '/ledger/ibkr.yaml'
     )
-    assert 'requests with this token and query for 5 min' in str(classified)
+    assert 'requests for this query with this token for 5 min' in str(classified)
+
+
+def test_token_wide_pause_names_every_query_of_the_token():
+    classified = _classify_response_code_error(
+        ResponseCodeError('1018', 'Too many requests.'), '/ledger/ibkr.yaml'
+    )
+    assert 'requests for every query of this token for 1 min' in str(classified)
 
 
 def test_throttle_code_says_throttling_not_generating():
@@ -150,6 +160,15 @@ def test_redact_short_token_only_scrubs_query_param():
     # Live tests use token="0"; must not scramble HTTP status codes etc.
     msg = 'SendRequest?v=3&t=0&q=999 (status 403 Forbidden)'
     assert _redact(msg, '0') == ('SendRequest?v=3&t=<redacted>&q=999 (status 403 Forbidden)')
+
+
+def test_token_hint_shows_only_the_last_four_characters():
+    assert _token_hint('SECRETTOKEN123') == ', token ending in N123'
+
+
+@pytest.mark.parametrize('token', ['', '0', 'SHORTTOKEN1'])
+def test_token_hint_is_empty_for_short_tokens(token):
+    assert _token_hint(token) == ''
 
 
 def test_redact_noop_without_token():
@@ -200,10 +219,33 @@ def test_extract_after_lockout_skips_ibkr_until_cooldown_ends(importer, ibkr_yam
     assert len(calls) == 1
     assert msg.startswith('IBKR import skipped:')
     assert '1025' in msg
-    assert '15 min' in msg
-    assert 'requests with this token stay paused' in msg
+    assert '60 min' in msg
+    assert 'stay paused' in msg
     assert 'restart Fava' in msg
     assert 'SECRETTOKEN123' not in msg
+
+
+def test_extract_with_a_new_token_after_lockout_still_skips_ibkr(importer, ibkr_yaml, monkeypatch):
+    calls = []
+
+    def locked(token, query_id):
+        calls.append(token)
+        raise ResponseCodeError('1025', 'Too many failed attempts.')
+
+    monkeypatch.setattr('beancount_tools_collection.utils.ibkr_flex.download', locked)
+    with pytest.raises(IBKRLockoutError) as excinfo:
+        importer.extract(ibkr_yaml)
+    assert 'token ending in N123' in str(excinfo.value)
+
+    with open(ibkr_yaml, 'w') as f:
+        yaml.dump({'token': 'FRESHTOKEN4567', 'queryId': 999999}, f)
+    with pytest.raises(IBKRLockoutError) as excinfo:
+        importer.extract(ibkr_yaml)
+    msg = str(excinfo.value)
+    assert calls == ['SECRETTOKEN123']
+    assert msg.startswith('IBKR import skipped:')
+    assert 'token ending in 4567' in msg
+    assert 'FRESHTOKEN4567' not in msg
 
 
 def test_extract_after_rejected_token_skips_ibkr_with_config_error(
