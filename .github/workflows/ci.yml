@@ -40,6 +40,13 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
+        pandas: ["locked"]
+        include:
+          # pandas 2 is still allowed by `pandas>=1.3.0`; it infers dtypes
+          # differently from the locked pandas 3.
+          - python-version: "3.12"
+            pandas: "<3"
+    name: test (python ${{ matrix.python-version }}, pandas ${{ matrix.pandas }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -53,7 +60,16 @@ jobs:
         run: uv sync --locked --group test --python ${{ matrix.python-version }}
 
       - name: Run tests
+        if: matrix.pandas == 'locked'
         run: make test
+
+      - name: Run tests with pandas ${{ matrix.pandas }}
+        if: matrix.pandas != 'locked'
+        env:
+          PANDAS_SPEC: pandas${{ matrix.pandas }}
+        run: |
+          uv run --with "$PANDAS_SPEC" python -c "import pandas; print('pandas', pandas.__version__)"
+          uv run --with "$PANDAS_SPEC" pytest
 
   build:
     runs-on: ubuntu-latest

@@ -735,9 +735,13 @@ class IBKRImporter(Importer):
             # relevant items from report
             reports = ['CashReport', 'Trades', 'CashTransactions', 'CorporateActions']
 
+            # dtype=object keeps ibflex's str-based enums (BuySell, CashAction) as enum
+            # objects. pandas 3 would otherwise infer its str dtype for those columns,
+            # and `df[col] == BuySell.BUY` then matches no row.
             tabs = {
                 report: pd.DataFrame(
-                    [dict(entry.__dict__.items()) for entry in flex_stmt.__dict__.get(report, [])]
+                    [dict(entry.__dict__.items()) for entry in flex_stmt.__dict__.get(report, [])],
+                    dtype=object,
                 )
                 for report in reports
             }
