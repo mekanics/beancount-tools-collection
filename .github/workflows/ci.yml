@@ -67,7 +67,9 @@ jobs:
         if: matrix.pandas != 'locked'
         env:
           PANDAS_SPEC: pandas${{ matrix.pandas }}
-        run: uv run --with "$PANDAS_SPEC" pytest
+        run: |
+          uv run --with "$PANDAS_SPEC" python -c "import pandas; print('pandas', pandas.__version__)"
+          uv run --with "$PANDAS_SPEC" pytest
 
   build:
     runs-on: ubuntu-latest
