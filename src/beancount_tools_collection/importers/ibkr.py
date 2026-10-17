@@ -2,10 +2,15 @@
 This is a beancount importer for Interactive Brokers.
 Setup:
 1) have a running beancount system
-2) activate IB FlexQuery with the entries specified in the supported transaction types below
+2) activate IB FlexQuery with the entries specified in the supported transaction types below.
+   Set the query format to XML.
 3) create an ibkr.yaml file with your IBKR FlexQuery credentials (see Configuration File section)
 4) in the config.py file, specify the IBKRImporter with the ibkr.yaml file location
 5) run 'bean-extract config.py ibkr.yaml -f mainLedgerFile.bean'
+
+To import without the API, run the same Flex query in Client Portal (XML format) and pass
+the downloaded file to bean-extract, or upload it on Fava's Import page. The same
+IBKRImporter recognises an Activity Flex XML file; no credentials are read for it.
 
 Configuration File (ibkr.yaml):
 The ibkr.yaml file must contain the following properties:
@@ -64,6 +69,15 @@ _IBKR_CODE_ALIASES: dict[str, list[str]] = {
     'RI': [Code.INTERNAL.value],
     'Ri': [Code.REIMBURSEMENT.value],
 }
+
+# Activity Flex XML is recognised by its root element. IBKR also serves Trade
+# Confirmation Flex (type TCF) and error documents (FlexStatementResponse); those
+# are not statements this importer can book.
+_FLEX_SNIFF_BYTES = 4096
+_FLEX_ACTIVITY_ROOT = re.compile(
+    rb'\A(?:\xef\xbb\xbf)?\s*(?:<\?xml[^>]*\?>\s*)?<FlexQueryResponse\b[^>]*\btype="AF"'
+)
+_FLEX_PERIOD = re.compile(rb'<FlexStatement\b[^>]*\bfromDate="(\d{8})"[^>]*\btoDate="(\d{8})"')
 
 
 class IBKRImportError(BeangulpError):
@@ -176,6 +190,9 @@ def _classify_response_code_error(error: ResponseCodeError, filepath: str) -> IB
             ' A new token does not lift this block, and IBKR does not say how long it lasts'
             ' (users report up to a day): stop importing, log in to Client Portal once,'
             ' and contact IBKR if 1025 persists the next day.'
+            ' Meanwhile you can import a statement downloaded from Client Portal:'
+            " run the Flex query as XML and upload the file on Fava's Import page"
+            ' (or pass it to bean-extract).'
         )
     elif code in _PERMANENT_CODES:
         cls, reason = IBKRConfigError, f'{_PERMANENT_CODES[code]} (code {code})'
@@ -221,6 +238,10 @@ class IBKRImporter(Importer):
     This importer processes Interactive Brokers FlexQuery XML files and converts them into
     Beancount transactions. It supports multiple accounts within a single FlexQuery and uses
     the account aliases defined in Interactive Brokers to structure the account hierarchy.
+
+    The file named by configFile (default ibkr.yaml) is fetched from the Flex Web Service.
+    Any other file that is an Activity Flex XML is read directly, so a statement downloaded
+    from Client Portal can be imported without contacting IBKR.
 
     Supported Transaction Types:
     - Stock trades (buy/sell)
@@ -322,9 +343,55 @@ class IBKRImporter(Importer):
         return self.Mainaccount
 
     def identify(self, filepath):
-        result = self.configFile == path.basename(filepath)
+        """ibkr.yaml by basename, or an Activity Flex XML by content. Never raises."""
+        result = self._is_config_file(filepath) or self._is_flex_xml(filepath)
         logger.info(f"identify assertion for ibkr importer and file '{filepath}': {result}")
         return result
+
+    def date(self, filepath):
+        """Statement end date for an Activity Flex XML; None for the credentials file."""
+        period = self._statement_period(filepath)
+        return period[1] if period else None
+
+    def filename(self, filepath):
+        """Archive name 'ibkr_<from>_<to>.xml' for an Activity Flex XML; else None."""
+        period = self._statement_period(filepath)
+        if period is None:
+            return None
+        start, end = period
+        return f'ibkr_{start:%Y-%m-%d}_{end:%Y-%m-%d}.xml'
+
+    def _is_config_file(self, filepath: str) -> bool:
+        return self.configFile == path.basename(filepath)
+
+    def _sniff(self, filepath: str) -> bytes:
+        """First bytes of filepath, or b'' when the file cannot be read.
+
+        identify, date and filename must not raise: Fava turns any exception
+        there into an error for the whole import listing.
+        """
+        try:
+            with open(filepath, 'rb') as f:
+                return f.read(_FLEX_SNIFF_BYTES)
+        except OSError:
+            return b''
+
+    def _is_flex_xml(self, filepath: str) -> bool:
+        return _FLEX_ACTIVITY_ROOT.search(self._sniff(filepath)) is not None
+
+    def _statement_period(self, filepath: str):
+        """(fromDate, toDate) of the first FlexStatement, or None."""
+        if self._is_config_file(filepath):
+            return None
+        match = _FLEX_PERIOD.search(self._sniff(filepath))
+        if match is None:
+            return None
+        try:
+            start = datetime.strptime(match.group(1).decode(), '%Y%m%d').date()
+            end = datetime.strptime(match.group(2).decode(), '%Y%m%d').date()
+        except ValueError:
+            return None
+        return start, end
 
     # def name(self) -> str:
     #     return self.configFile
@@ -522,8 +589,6 @@ class IBKRImporter(Importer):
         """
         try:
             response = ibkr_flex.fetch(token, queryId)
-            response = self._sanitize_ibkr_xml(response)
-            statement = parser.parse(response)
         except ResponseCodeError as e:
             # Safe to chain: ResponseCodeError messages are code + IBKR text only.
             classified = _classify_response_code_error(e, filepath)
@@ -535,16 +600,6 @@ class IBKRImporter(Importer):
             msg = f'IBKR import failed: {e} — try again later. Config: {filepath}'
             logger.error(msg)
             raise IBKRTemporaryError(msg) from e
-        except FlexParserError as e:
-            # Safe to chain: parser errors describe XML/enums, not the Flex token.
-            msg = _redact(
-                f'IBKR import failed: could not parse Flex statement from '
-                f"'{filepath}': {e}. If this is an unknown note code, extend "
-                f'_IBKR_CODE_ALIASES.',
-                token,
-            )
-            logger.error(msg)
-            raise IBKRStatementError(msg) from e
         except BadResponseError as e:
             # Do not chain: BadResponseError's message is the raw response body.
             status = getattr(e.response, 'status_code', '?')
@@ -568,17 +623,64 @@ class IBKRImporter(Importer):
         except Exception as e:
             # Do not chain: unknown upstream errors may embed secrets.
             msg = _redact(
-                f'IBKR import failed: unexpected error fetching/parsing '
-                f"statement for '{filepath}': {type(e).__name__}: {e}",
+                f'IBKR import failed: unexpected error fetching statement for '
+                f"'{filepath}': {type(e).__name__}: {e}",
                 token,
             )
             logger.error(msg)
             raise IBKRImportError(msg) from None
 
+        try:
+            return self._parse_statement(response, filepath)
+        except IBKRStatementError as e:
+            # Redact before logging. Do not chain when the text changed: the
+            # original message is what would put the token in the traceback.
+            msg = _redact(str(e), token)
+            logger.error(msg)
+            if msg != str(e):
+                raise IBKRStatementError(msg) from None
+            raise
+
+    def _read_statement_file(self, filepath: str):
+        """Read an Activity Flex XML from disk. No credentials, no network."""
+        try:
+            with open(filepath, 'rb') as f:
+                xml = f.read()
+        except OSError as e:
+            raise IBKRStatementError(
+                f"IBKR import failed: cannot read Flex statement file '{filepath}': {e}"
+            ) from e
+        try:
+            return self._parse_statement(xml, filepath)
+        except IBKRStatementError as e:
+            logger.error(str(e))
+            raise
+
+    def _parse_statement(self, xml: bytes, source: str):
+        """Sanitize and parse Flex XML.
+
+        Raises:
+            IBKRStatementError: the bytes are not a FlexQueryResponse. `source`
+            (a path or the credentials file) is named in the message.
+        """
+        try:
+            statement = parser.parse(self._sanitize_ibkr_xml(xml))
+        except FlexParserError as e:
+            # The caller logs this, after redacting any Flex token on the API path.
+            raise IBKRStatementError(
+                f'IBKR import failed: could not parse Flex statement from '
+                f"'{source}': {e}. If this is an unknown note code, extend "
+                f'_IBKR_CODE_ALIASES.'
+            ) from e
+        except Exception as e:
+            raise IBKRStatementError(
+                f'IBKR import failed: could not parse Flex statement from '
+                f"'{source}': {type(e).__name__}: {e}"
+            ) from e
+
         if not isinstance(statement, Types.FlexQueryResponse):
             raise IBKRStatementError(
-                f'IBKR import failed: unexpected statement type '
-                f"{type(statement)!r} from '{filepath}'"
+                f"IBKR import failed: unexpected statement type {type(statement)!r} from '{source}'"
             )
         return statement
 
@@ -600,13 +702,18 @@ class IBKRImporter(Importer):
         # Store existing entries for cost basis lookup in corporate actions
         self._existing_entries = existing
 
-        token, queryId = self._load_credentials(filepath)
-
-        if self.fpath is None:
-            statement = self._download_statement(token, queryId, filepath)
+        if self._is_config_file(filepath):
+            token, queryId = self._load_credentials(filepath)
+            if self.fpath is None:
+                statement = self._download_statement(token, queryId, filepath)
+            else:
+                statement = self._load_pickled_statement(self.fpath)
         else:
-            statement = self._load_pickled_statement(self.fpath)
+            statement = self._read_statement_file(filepath)
 
+        return self._entries_from_statement(statement)
+
+    def _entries_from_statement(self, statement):
         all_transactions = []
 
         # Process each FlexStatement

@@ -3,6 +3,7 @@
 No network and no .env credentials required.
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -102,6 +103,8 @@ def test_lockout_code_tells_the_user_to_wait_rather_than_change_token():
     assert 'command line' in msg
     assert 'A new token does not lift this block' in msg
     assert 'Client Portal' in msg
+    assert 'upload' in msg
+    assert 'XML' in msg
     assert 'generate a new' not in msg
     assert '/ledger/ibkr.yaml' in msg
 
@@ -362,7 +365,7 @@ def test_bad_response_traceback_excludes_body_and_token(importer, ibkr_yaml, mon
 
 
 def test_missing_credentials_file_raises_config_error(importer, tmp_path):
-    missing = str(tmp_path / 'does-not-exist.yaml')
+    missing = str(tmp_path / 'ibkr.yaml')
     with pytest.raises(IBKRConfigError) as excinfo:
         importer.extract(missing)
     assert missing in str(excinfo.value)
@@ -445,6 +448,12 @@ def test_bad_response_error_excludes_body(importer, ibkr_yaml, monkeypatch):
 # ---------------------------------------------------------------------------
 # identify / account must not hit the network
 # ---------------------------------------------------------------------------
+
+
+def test_identify_rejects_a_renamed_config(importer, ibkr_yaml, tmp_path):
+    renamed = tmp_path / 'credentials.yaml'
+    renamed.write_bytes(Path(ibkr_yaml).read_bytes())
+    assert importer.identify(str(renamed)) is False
 
 
 def test_identify_and_account_perform_no_network_io(importer, ibkr_yaml, monkeypatch):

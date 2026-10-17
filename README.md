@@ -20,7 +20,7 @@
 
 **International Institutions:**
 
-- **Interactive Brokers** - FlexQuery XML reports (global); fetch/credential failures surface as errors in Fava and exit non-zero in the CLI (a genuinely empty statement still shows "No entries to import")
+- **Interactive Brokers** - FlexQuery XML reports (global), fetched from the Flex Web Service or imported from a downloaded Activity Flex XML file; fetch/credential failures surface as errors in Fava and exit non-zero in the CLI (a genuinely empty statement still shows "No entries to import")
 - **Revolut** - CSV exports (multi-country)
 
 **Other Formats:**
@@ -250,6 +250,24 @@ picks the lots. With several lots of one stock that needs
 "Ambiguous matches" error. Sells whose closed lots don't add up, and cancelled
 sells, are flagged `!` for review.
 
+### Importing a downloaded IBKR statement
+
+The same `IBKRImporter` reads an Activity Flex XML file directly, so you can
+import without the Flex Web Service — including while IBKR is blocking API
+requests (code 1025). No credentials are read for that file.
+
+1. In Client Portal, run the Flex query and set the format to XML. CSV and
+   Trade Confirmation Flex files are ignored.
+2. In Fava, upload the file on the Import page. That needs `import-config`
+   pointing at your import config and at least one `import-dirs` folder; the
+   upload lands in the first of those folders. IBKR names the download after
+   the query (`Beancount.xml`), and Fava refuses a second upload of the same
+   name until you move the first one.
+3. Or from the command line: `bean-extract config.py Beancount.xml`.
+
+Moving the file in Fava archives it as `YYYY-MM-DD ibkr_<from>_<to>.xml`,
+which frees the upload name.
+
 ### Interactive Brokers errors (v1.1.0+)
 
 IBKR Flex fetch and credential failures (expired/invalid token, bad `ibkr.yaml`, network errors, unparseable statements) now raise typed errors instead of returning an empty entry list. In Fava this surfaces as an import/API error (rather than the yellow "No entries to import from this file." warning that used to appear on hard failures). The CLI exits non-zero with a short remediation message.
@@ -265,9 +283,9 @@ IBKR allows one Flex request per second and ten per minute per token, and blocks
 | Invalid query, account or request (1010, 1014, 1016, 1020)                  | 5 min  | that query with that token                              |
 | 1018, too many requests                                                     | 1 min  | every query of the token                                |
 
-During a pause the import fails with "IBKR import skipped" and says how long is left; restarting Fava clears all pauses. Pauses only last as long as the Fava process: each command-line import starts fresh, so wait out the time the error message gives before running it again. A downloaded statement is reused for five minutes. Error messages end with the token's last four characters, so you can check which token was sent.
+During a pause the import fails with "IBKR import skipped" and says how long is left; restarting Fava clears all pauses. Pauses only last as long as the Fava process: each command-line import starts fresh, so wait out the time the error message gives before running it again. A statement just fetched from the API is reused for five minutes. Error messages end with the token's last four characters, so you can check which token was sent.
 
-A new token does not lift a 1025 block, which is why that pause also covers the query with a new token. IBKR does not say how long the block lasts; users report up to a day. Stop importing, log in to Client Portal once, and contact IBKR if 1025 persists the next day.
+A new token does not lift a 1025 block, which is why that pause also covers the query with a new token. IBKR does not say how long the block lasts; users report up to a day. Stop importing, log in to Client Portal once, and contact IBKR if 1025 persists the next day. You can still import a statement file downloaded from Client Portal; see [Importing a downloaded IBKR statement](#importing-a-downloaded-ibkr-statement).
 
 ### Publishing to PyPI
 
