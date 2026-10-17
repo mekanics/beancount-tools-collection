@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "beancount-tools-collection"
-version = "1.4.2"
+version = "1.5.0"
 description = "A comprehensive collection of beancount tools: importers, price fetchers, plugins, and utilities"
 readme = "README.md"
 license = {text = "MIT"}
