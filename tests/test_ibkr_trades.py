@@ -43,12 +43,18 @@ def importer():
     )
 
 
-@pytest.fixture
-def extract(importer, tmp_path, monkeypatch):
-    cfg = tmp_path / 'ibkr.yaml'
-    cfg.write_text(yaml.dump({'token': 'SECRETTOKEN123', 'queryId': 999999}))
+@pytest.fixture(params=['api', 'xml'])
+def extract(request, importer, tmp_path, monkeypatch):
+    """Import the same statement via the Flex API and via an XML file."""
 
     def run(xml):
+        if request.param == 'xml':
+            path = tmp_path / 'Beancount.xml'
+            path.write_text(xml)
+            return importer.extract(str(path))
+
+        cfg = tmp_path / 'ibkr.yaml'
+        cfg.write_text(yaml.dump({'token': 'SECRETTOKEN123', 'queryId': 999999}))
         monkeypatch.setattr(
             'beancount_tools_collection.utils.ibkr_flex.download',
             lambda token, query_id: xml.encode(),
