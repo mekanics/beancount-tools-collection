@@ -355,6 +355,82 @@ def test_reimbursement_note_is_kept(execution_notes):
     assert notes[ACME_SELL_ORDER] == (Code.REIMBURSEMENT,)
 
 
-def test_recurring_investment_buy_is_not_tagged_drip(extract):
-    entries = extract(with_notes(SAMPLE_XML, WIDG_DRIP_ORDER, 'RI'))
-    assert txn(entries, 'BUY 0.8 WIDG @ 40.25 USD').tags == frozenset()
+WIDG_BUY = 'BUY 0.8 WIDG @ 40.25 USD'
+
+
+def test_recurring_investment_buy_is_tagged_recurring_not_drip(extract):
+    buy = txn(extract(with_notes(SAMPLE_XML, WIDG_DRIP_ORDER, 'RI')), WIDG_BUY)
+    assert buy.tags == frozenset({'recurring'})
+    assert buy.meta['ibkr_notes'] == 'RI'
+
+
+def test_recurring_tag_is_configurable(importer, extract):
+    importer.recurringTag = 'dca'
+    buy = txn(extract(with_notes(SAMPLE_XML, WIDG_DRIP_ORDER, 'RI')), WIDG_BUY)
+    assert buy.tags == frozenset({'dca'})
+
+
+@pytest.mark.parametrize('disabled', [None, ''])
+def test_recurring_tag_can_be_turned_off(importer, extract, disabled):
+    importer.recurringTag = disabled
+    buy = txn(extract(with_notes(SAMPLE_XML, WIDG_DRIP_ORDER, 'RI')), WIDG_BUY)
+    assert buy.tags == frozenset()
+    assert buy.meta['ibkr_notes'] == 'RI'
+
+
+def test_recurring_tag_defaults_to_recurring():
+    assert IBKRImporter(Mainaccount='Assets:Invest:IB').recurringTag == 'recurring'
+
+
+def test_reimbursement_buy_is_not_tagged_recurring(extract):
+    buy = txn(extract(with_notes(SAMPLE_XML, WIDG_DRIP_ORDER, 'Ri')), WIDG_BUY)
+    assert buy.tags == frozenset()
+    assert buy.meta['ibkr_notes'] == 'Ri'
+
+
+def test_trades_keep_ibkr_raw_note_codes(extract):
+    entries = extract(SAMPLE_XML)
+
+    assert txn(entries, WIDG_BUY).meta['ibkr_notes'] == 'R'
+    assert txn(entries, WIDG_SELL).meta['ibkr_notes'] == 'P'
+    # FP is unknown to ibflex and dropped before parsing, but kept here.
+    assert txn(entries, WIDG_FRACTION_SELL).meta['ibkr_notes'] == 'FP;P'
+    assert 'ibkr_notes' not in txn(entries, ACME_SELL).meta
+
+
+FX_TRADE = (
+    '<Trade currency="CHF" symbol="USD.CHF" description="USD.CHF" '
+    'dateTime="20250306;155118" tradeDate="20250306" quantity="1981.57" '
+    'proceeds="-1634.200779" ibCommission="0" ibCommissionCurrency="USD" cost="0" '
+    'origTradePrice="0" buySell="BUY" ibOrderID="1000000009" openDateTime="" '
+    'levelOfDetail="EXECUTION" tradePrice="0.8247" notes="AFx" />\n'
+)
+
+
+def test_forex_trade_keeps_ibkr_raw_note_codes(extract):
+    entries = extract(SAMPLE_XML.replace('</Trades>', FX_TRADE + '</Trades>'))
+    fx = [e for e in entries if isinstance(e, data.Transaction) and e.payee == 'USD.CHF']
+    assert [e.meta['ibkr_notes'] for e in fx] == ['AFx']
+
+
+def test_raw_notes_skip_elements_ibflex_does_not_know(extract):
+    unknown = '<FutureThing currency="USD" symbol="WIDG" notes="RI" />\n'
+    xml = SAMPLE_XML.replace(
+        '<Trade currency="USD" symbol="WIDG"', unknown + '<Trade currency="USD" symbol="WIDG"', 1
+    )
+    with pytest.warns(UserWarning, match='FutureThing'):
+        entries = extract(xml)
+
+    buy = txn(entries, WIDG_BUY)
+    assert buy.meta['ibkr_notes'] == 'R'
+    assert buy.tags == frozenset({'drip'})
+
+
+def test_raw_notes_follow_their_own_statement(extract):
+    statement = re.search(r'<FlexStatement .*?</FlexStatement>\n', SAMPLE_XML, re.S).group(0)
+    second = with_notes(statement, WIDG_DRIP_ORDER, 'RI').replace('U0000000', 'U0000001')
+    xml = SAMPLE_XML.replace(statement, statement + second).replace('count="1"', 'count="2"', 1)
+
+    buys = [e for e in extract(xml) if isinstance(e, data.Transaction) and e.narration == WIDG_BUY]
+    assert sorted(b.meta['ibkr_notes'] for b in buys) == ['R', 'RI']
+    assert sorted(sorted(b.tags) for b in buys) == [['drip'], ['recurring']]

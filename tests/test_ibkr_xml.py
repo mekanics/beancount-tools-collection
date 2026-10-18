@@ -274,6 +274,21 @@ def test_config_file_with_fpath_uses_the_pickle_and_skips_the_api(importer, tmp_
     assert any(isinstance(entry, data.Transaction) for entry in entries)
 
 
+def test_pickled_statement_imports_without_raw_note_codes(importer, tmp_path, monkeypatch):
+    pickled = tmp_path / 'statement.pickle'
+    pickled.write_bytes(pickle.dumps(parser.parse(SAMPLE_XML.encode())))
+    importer.fpath = str(pickled)
+    cfg = tmp_path / 'ibkr.yaml'
+    cfg.write_text(yaml.dump({'token': 'SECRETTOKEN123', 'queryId': 999999}))
+    importer.extract(str(write_xml(tmp_path, SAMPLE_XML)))
+
+    entries = importer.extract(str(cfg))
+
+    buys = [e for e in entries if isinstance(e, data.Transaction) and e.narration == BUY]
+    assert len(buys) == 1
+    assert 'ibkr_notes' not in buys[0].meta
+
+
 def test_unexpected_statement_type_raises_statement_error(importer, tmp_path, monkeypatch):
     path = write_xml(tmp_path, SAMPLE_XML)
     monkeypatch.setattr(
