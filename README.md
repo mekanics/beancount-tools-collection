@@ -250,6 +250,27 @@ picks the lots. With several lots of one stock that needs
 "Ambiguous matches" error. Sells whose closed lots don't add up, and cancelled
 sells, are flagged `!` for review.
 
+### Interactive Brokers note codes
+
+Every trade keeps IBKR's note codes exactly as the statement writes them, as
+`ibkr_notes` metadata (`ibkr_notes: "FP;P"`). Trades without notes get no key.
+The codes come from the XML itself, so codes ibflex doesn't know (`FP`, `AFx`)
+survive too.
+
+Buys made by a recurring investment plan (code `RI`) are tagged `#recurring`.
+Dividend reinvestments (code `R`) are tagged `#drip`. To use your own tag,
+or none, pass `recurringTag`:
+
+```python
+ibkr.IBKRImporter(
+    ...,
+    recurringTag='dca',  # None or '' turns the tag off; ibkr_notes still says RI
+)
+```
+
+A statement saved with `fpath` (a pickle) no longer carries the raw codes, so
+its trades get neither `ibkr_notes` nor `#recurring`.
+
 ### Importing a downloaded IBKR statement
 
 The same `IBKRImporter` reads an Activity Flex XML file directly, so you can

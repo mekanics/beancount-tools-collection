@@ -34,6 +34,7 @@ import math
 import pickle
 import re
 import warnings
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from os import path
 
@@ -69,6 +70,36 @@ _IBKR_CODE_ALIASES: dict[str, list[str]] = {
     'RI': [Code.INTERNAL.value],
     'Ri': [Code.REIMBURSEMENT.value],
 }
+
+# IBKR's note code for a recurring investment (auto-invest plan). The alias above
+# loses it, so buys are tagged from the raw notes instead.
+_RECURRING_INVESTMENT_CODE = 'RI'
+
+
+def _raw_trade_notes(xml: bytes) -> list[list[str]] | None:
+    """IBKR's unaltered notes for every row ibflex parses from each statement's Trades.
+
+    One list per FlexStatement, in document order, skipping the elements ibflex
+    skips, so position i matches FlexStatement.Trades[i]. None when the XML
+    cannot be read; the ibflex parse then reports the error.
+    """
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return None
+    notes = []
+    for statement in root.iter('FlexStatement'):
+        trades = statement.find('Trades')
+        children = () if trades is None else trades
+        notes.append(
+            [
+                child.get('notes', '')
+                for child in children
+                if getattr(Types, child.tag, None) is not None
+            ]
+        )
+    return notes
+
 
 # Activity Flex XML is recognised by its root element. IBKR also serves Trade
 # Confirmation Flex (type TCF) and error documents (FlexStatementResponse); those
@@ -285,6 +316,12 @@ class IBKRImporter(Importer):
     - Flagged '!' when closed lots don't cover the sell, and for cancelled sells.
     - suppressClosedLotPrice is ignored: no lot price is written any more.
 
+    Note codes:
+    - Trades keep IBKR's note codes unaltered as ibkr_notes metadata, e.g. "FP;P",
+      including codes ibflex does not know. Not available for a pickled statement (fpath).
+    - Buys IBKR marks as a recurring investment (RI) get the recurringTag tag
+      (default "recurring"; None or "" disables it). Dividend reinvestments get #drip.
+
     Corporate Actions:
     - Forward stock splits (FS): Additional shares are added with zero cost basis
     - Reverse stock splits (RS): Old shares are removed and new consolidated shares added
@@ -315,6 +352,7 @@ class IBKRImporter(Importer):
         # Configurable account type mappings
         cashAccountType='Cash',  # What to replace with for cash accounts (e.g., "Stocks" -> "Cash")
         stockAccountType='Stocks',  # What to replace for stock accounts (default: "Stocks")
+        recurringTag='recurring',  # tag for recurring-investment buys; None or '' disables it
     ):
         self.Mainaccount = Mainaccount  # main IB account in beancount
         self.DivAccount = DivAccount  # main IB dividend account in beancount
@@ -332,7 +370,9 @@ class IBKRImporter(Importer):
         self.suppressClosedLotPrice = suppressClosedLotPrice
         self.flag = '*'
         self.configFile = configFile
+        self.recurringTag = recurringTag
         self._account_alias = None  # Will be set when processing statements
+        self._raw_notes = None  # per statement, set by _parse_statement
 
         # Configurable account type mappings
         self.cashAccountType = cashAccountType
@@ -682,6 +722,7 @@ class IBKRImporter(Importer):
             raise IBKRStatementError(
                 f"IBKR import failed: unexpected statement type {type(statement)!r} from '{source}'"
             )
+        self._raw_notes = _raw_trade_notes(xml)
         return statement
 
     def _load_pickled_statement(self, fpath: str):
@@ -701,6 +742,7 @@ class IBKRImporter(Importer):
 
         # Store existing entries for cost basis lookup in corporate actions
         self._existing_entries = existing
+        self._raw_notes = None
 
         if self._is_config_file(filepath):
             token, queryId = self._load_credentials(filepath)
@@ -717,7 +759,7 @@ class IBKRImporter(Importer):
         all_transactions = []
 
         # Process each FlexStatement
-        for flex_stmt in statement.FlexStatements:
+        for index, flex_stmt in enumerate(statement.FlexStatements):
             # Get account alias for this statement
             if hasattr(flex_stmt, 'AccountInformation'):
                 raw_alias = flex_stmt.AccountInformation.acctAlias
@@ -751,6 +793,17 @@ class IBKRImporter(Importer):
             tr = tabs['Trades']
             cr = tabs['CashReport']
             ca = tabs['CorporateActions']
+
+            raw_notes = (
+                self._raw_notes[index] if self._raw_notes and index < len(self._raw_notes) else None
+            )
+            if raw_notes is not None and len(raw_notes) == len(tr):
+                tr['rawNotes'] = raw_notes
+            elif raw_notes is not None:
+                logger.warning(
+                    f'IBKR note codes not kept: {len(raw_notes)} raw Trades rows vs '
+                    f'{len(tr)} parsed for account {flex_stmt.accountId}'
+                )
 
             # throw out IBKR jitter, mostly None
             ct.drop(columns=[col for col in ct if all(ct[col].isnull())], inplace=True)
@@ -1204,7 +1257,7 @@ class IBKRImporter(Importer):
 
             fxTransactions.append(
                 data.Transaction(
-                    data.new_metadata('FX Transaction', 0),
+                    data.new_metadata('FX Transaction', 0, self._note_meta(row)),
                     row['tradeDate'],
                     self.flag,
                     symbol,  # payee
@@ -1215,6 +1268,24 @@ class IBKRImporter(Importer):
                 )
             )
         return fxTransactions
+
+    @staticmethod
+    def _raw_notes_of(row):
+        """IBKR's notes for a trade row as written in the XML, '' when unknown."""
+        raw = row.get('rawNotes')
+        return raw if isinstance(raw, str) else ''
+
+    def _note_meta(self, row):
+        raw = self._raw_notes_of(row)
+        return {'ibkr_notes': raw} if raw else {}
+
+    def _buy_tags(self, row):
+        tags = set()
+        if Code.REINVESTMENT in row.get('notes', ()):
+            tags.add('drip')
+        if self.recurringTag and _RECURRING_INVESTMENT_CODE in self._raw_notes_of(row).split(';'):
+            tags.add(self.recurringTag)
+        return frozenset(tags)
 
     def Stocktrades(self, stocks):
         # return the stocks transactions
@@ -1341,18 +1412,14 @@ class IBKRImporter(Importer):
                 data.Posting(self.getLiquidityAccount(currency), proceeds, None, None, None, None),
             ] + self._commission_postings(row)
 
-            tags = (
-                frozenset({'drip'}) if Code.REINVESTMENT in row.get('notes', ()) else data.EMPTY_SET
-            )
-
             Shoppingbag.append(
                 data.Transaction(
-                    data.new_metadata('Buy', 0),
+                    data.new_metadata('Buy', 0, self._note_meta(row)),
                     row['dateTime'].date(),
                     self.flag,
                     symbol,  # payee
                     ' '.join(['BUY', quantity.to_string(), '@', price.to_string()]),
-                    tags,
+                    self._buy_tags(row),
                     data.EMPTY_SET,
                     postings,
                 )
@@ -1380,7 +1447,7 @@ class IBKRImporter(Importer):
                     row, closed_lots.get(idx)
                 )
 
-            meta = {'lot_source': lot_source}
+            meta = {'lot_source': lot_source, **self._note_meta(row)}
             if not pd.isna(row.get('cost')):
                 # A string, not an Amount: Fava's metadata UI cannot render an
                 # Amount and shows "Unsupported metadata value" instead.
